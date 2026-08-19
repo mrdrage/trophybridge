@@ -104,7 +104,7 @@ The user explicitly requires **€0/month** and does not want accidental overage
 Verified on 2026-08-19:
 
 - connected Supabase organization is on the Free plan;
-- connected Supabase database was healthy and about 11 MB before real PSN import;
+- connected Supabase database is healthy and about 11 MB before the first real PSN import;
 - TrophyBridge GitHub repository is public and CI uses standard hosted runners;
 - Vercel deployment is planned for Hobby only and has not yet been activated.
 
@@ -126,7 +126,9 @@ Quota-pressure policy: throttle/disable optional work, serve last-good state, or
 
 Project ref: `aecehligohfsjqbgoeeo`, region `eu-west-3`.
 
-Production migrations through M3 are already applied. The M4 migration must be applied only after final M4 CI is green, then Supabase advisors must be rechecked.
+Production migrations now include M1 domain model, M1 integrity refinements, M3 authentication, M3 hardening, and **M4 Library Sync**. Direct post-migration verification confirms the M4 `account_games` columns exist, the `authenticated` role cannot execute `persist_library_snapshot`, and `service_role` can execute it.
+
+Supabase security advisors report only informational RLS-without-policy notices on intentionally server-only/deny-by-default tables. Performance advisors report unused-index informational notices expected while the database contains no real imported game data. No new actionable M4 advisor finding remains.
 
 Never paste NPSSO, OAuth client secrets, Supabase secret/service-role keys, refresh/access tokens, or the TrophyBridge encryption key into ChatGPT, GitHub issues, commits, logs, screenshots, or documentation.
 
