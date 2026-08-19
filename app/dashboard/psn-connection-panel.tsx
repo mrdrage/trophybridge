@@ -108,7 +108,7 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
             />
           </label>
           <p className="help">
-            L'NPSSO viene usato una sola volta dal server per verificare il tuo account.
+            L&apos;NPSSO viene usato una sola volta dal server per verificare il tuo account.
             Non viene salvato. TrophyBridge conserva solo il refresh token cifrato.
           </p>
           <button className="button primary" type="submit" disabled={busy}>
