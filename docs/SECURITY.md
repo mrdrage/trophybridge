@@ -1,232 +1,142 @@
 # TrophyBridge Security Model
 
-TrophyBridge handles credentials that can provide access to PlayStation account data. Security requirements are therefore part of the product contract from the first milestone.
+Security is part of the TrophyBridge product contract because the application handles authorization capable of reading PlayStation account data.
 
-## Threat model summary
+## Trust boundaries
 
-The system must assume that:
-
-- the source repository is public;
-- public share URLs may be copied or leaked;
-- application logs may be viewed by developers or hosting operators;
-- the database may eventually contain enough information to be attractive to an attacker;
-- upstream PSN behavior and community tooling may change;
-- an AI client should be treated as an untrusted public API consumer, never as a holder of secrets.
+Assume the repository is public, application logs may be inspected by operators, public share URLs may leak, the database may become an attack target, and PSN/community interfaces may change. An AI client is always treated as an untrusted public consumer, never as a secret holder.
 
 ## Secret classification
 
-The following values are secret and must never appear in source code, public APIs, browser bundles, screenshots committed to the repository, analytics payloads, or application logs:
+Never expose or log:
 
 - PSN NPSSO values;
-- PlayStation access tokens;
-- PlayStation refresh tokens;
-- Supabase service-role/secret keys;
-- `TOKEN_ENCRYPTION_KEY`;
+- PSN access tokens;
+- PSN refresh tokens;
 - authorization headers;
-- any future private signing keys.
+- Supabase service-role/secret keys;
+- `TOKEN_ENCRYPTION_KEY` or previous encryption keys;
+- future private signing keys.
 
-## PSN authentication
-
-The planned connection flow is:
+## Implemented M3 authentication flow
 
 ```text
-User enters NPSSO in authenticated dashboard
+Authenticated TrophyBridge dashboard
         |
         v
-Server receives value over HTTPS
+NPSSO received by a private Node.js route
         |
         v
-PSN adapter exchanges it for usable authorization
+NPSSO -> PSN access code -> access + refresh authorization
+        |
+        +--> exact Online ID search
+        |       |
+        |       v
+        |   stable accountId
+        |       |
+        |       v
+        |   profile.isMe verification
+        |
+        +--> NPSSO discarded
+        |
+        +--> access token kept only for the request/runtime lifecycle
         |
         v
-NPSSO is discarded
+refresh token -> AES-256-GCM -> server-only PostgreSQL credential row
 ```
 
-The NPSSO is bootstrap material only. It is not intended to be durable application state.
+TrophyBridge does not persist NPSSO or PSN access tokens.
 
-A refresh token may need durable storage. When implemented, it must be encrypted server-side before persistence.
+## Durable credential encryption
 
-## Token encryption
+M3 implements AES-256-GCM using Node.js `crypto`.
 
-Planned application-level encryption:
-
-```text
-AES-256-GCM
-```
-
-The master encryption key is supplied via the deployment environment and never stored in PostgreSQL.
-
-A future server-only credential record is expected to include:
+Each encrypted refresh credential stores:
 
 ```text
-psn_account_id
 encrypted_refresh_token
-iv
-auth_tag
+encryption_iv
+encryption_auth_tag
 key_version
-updated_at
+refresh_token_expires_at
+last_refreshed_at
 ```
 
-Key versioning is included from the start so credentials can be rotated without redesigning the schema.
+The 256-bit master key is supplied through the server environment. A fresh 96-bit IV is generated for each encryption. Additional Authenticated Data binds the ciphertext to both the internal TrophyBridge PSN-account ID and the verified PlayStation account ID, so moving ciphertext between accounts causes authentication failure.
 
-## Public share links
+`TOKEN_ENCRYPTION_KEY_VERSION` identifies the active encryption key. `TOKEN_ENCRYPTION_PREVIOUS_KEYS_JSON` may temporarily provide old versions for decryption during rotation. Successful refresh writes the credential again under the active key.
 
-Public links are capability URLs. Possession of the URL grants read-only access to the explicitly shared trophy data.
+The database never contains the encryption master key.
 
-Requirements:
+## Credential persistence and RLS
 
-- cryptographically random token with at least 256 bits of entropy;
-- raw token is shown to the user only as necessary;
-- database stores a cryptographic hash rather than relying on the raw token;
-- links can be revoked independently of PSN authentication;
-- a new link can be issued without reconnecting PSN;
-- public endpoints never permit mutation;
-- responses are not indexed by search engines.
+M3 creates `public.psn_credentials` as a one-to-one server-only child of `psn_accounts`.
 
-M1 creates only the persistence shape for `share_links`. Token generation, hashing, rotation and public route behavior remain M7 work.
+- RLS is enabled.
+- `anon` and `authenticated` receive no privilege on `psn_credentials`.
+- application server code accesses it through the Supabase service-role client.
+- an authenticated browser may select only its own non-secret `psn_accounts` connection metadata through `owner_user_id = auth.uid()`.
+- v0.1 allows one PSN connection per TrophyBridge owner.
 
-## Public-data allowlist
+Ciphertext is intentionally treated as server-only even though it is encrypted.
 
-Public APIs are allowlist based. The following categories may be exposed when enabled by share settings:
+## TrophyBridge session security
 
-- PSN Online ID;
-- game title and platform;
-- public game/trophy artwork URLs;
-- trophy metadata;
-- earned/missing state;
-- trophy earned timestamps;
-- progress values provided by PSN;
-- TrophyBridge synchronization timestamps.
+M3 uses Supabase Auth with SSR cookies and GitHub OAuth. The root Next.js `proxy.ts` handles session refresh for authenticated/private paths. Authentication responses copy Supabase's refreshed cookies and are marked `private, no-store` to prevent caching of user-specific session material.
 
-Everything else is denied by default.
+Server routes resolve the authenticated user before PSN operations. The Supabase service-role client is created only in server modules and is never exported to client components.
 
-Specifically excluded:
+## PSN identity verification
 
-- email addresses;
-- PSN authentication identifiers not needed for display;
-- friend lists;
-- device information;
-- account-management data;
-- authentication material.
+A claimed PSN Online ID is not trusted by itself. After NPSSO exchange, TrophyBridge:
 
-## Hidden trophy handling
+1. searches the exact Online ID;
+2. obtains its stable PSN `accountId`;
+3. fetches that profile using the freshly issued access token;
+4. requires `isMe=true`;
+5. requires the returned Online ID to match the claimed ID.
 
-Unearned hidden trophies can contain story spoilers. The default public behavior must conceal spoiler-bearing fields unless the share owner explicitly opts in.
+This prevents connecting an arbitrary searched profile to authorization belonging to someone else.
 
-Default unearned hidden representation:
+## Connection states
 
-```json
-{
-  "name": "Hidden Trophy",
-  "description": null,
-  "hidden": true,
-  "earned": false
-}
+`psn_accounts.auth_status` is explicit:
+
+```text
+connected
+refreshing
+reauth_required
+error
 ```
 
-## Supabase and database access
-
-Application tables exposed through Supabase must use Row Level Security. Administrative/service-role credentials are server-only and must never be instantiated in client-side code.
-
-M1 now enforces this requirement directly: RLS is enabled on all ten TrophyBridge application tables in the exposed `public` schema.
-
-M1 deliberately defines **no client policies**. That means browser/anonymous access is denied by default while the application does not yet have a finished ownership/authentication layer. Server-side service-role access is the intended writer until M3 introduces TrophyBridge authentication and owner-scoped policies.
-
-The public TrophyBridge API will access data through controlled server routes rather than handing database-wide privileges to a browser client.
-
-### Persistence integrity as a security control
-
-M1 also moves several trust boundaries into PostgreSQL:
-
-- provider game identities and player/trophy state cannot be duplicated;
-- one title cannot silently acquire multiple base trophy groups;
-- trophies cannot be attached to groups from another game;
-- progress events cannot attribute a trophy to the wrong game;
-- progress events cannot attribute a sync run to the wrong PSN account;
-- repeated syncs cannot duplicate the same earned/discovery event;
-- `earned=true` cannot silently regress to `false` through ordinary updates;
-- a trusted earlier `earned_at` timestamp cannot be replaced by a later or missing value.
-
-These controls reduce the damage a buggy future sync writer can cause to durable state.
+An absent/expired refresh credential becomes `reauth_required`. A failed authenticated refresh does not silently delete normalized trophy state. Disconnect deletes only the durable credential and marks the account for reauthentication.
 
 ## Logging
 
-Logs are structured and minimal.
+Allowed operational events include `psn_connect_failed`, `psn_refresh_failed`, `sync_started`, `sync_completed`, and non-sensitive correlation IDs/error codes.
 
-Allowed examples:
+Never include raw provider error payloads when they can contain credentials. Public/private API errors use stable safe TrophyBridge codes and messages.
 
-```text
-sync_started
-sync_completed
-sync_failed
-psn_refresh_failed
-share_link_created
-share_link_revoked
-```
+## Public sharing
 
-Useful correlation fields may include:
+M7 will implement capability URLs with high-entropy tokens, hashed persistence, revocation, read-only methods, non-indexing, and a strict public-data allowlist. Authentication material and email addresses are permanently outside that allowlist.
 
-```text
-request_id
-sync_run_id
-internal game id
-duration
-status
-non-sensitive error code
-```
+## Hidden trophies
 
-Never log:
+Future public routes should conceal name/description of unearned hidden trophies by default to reduce spoilers.
 
-```text
-NPSSO
-access token
-refresh token
-Authorization header
-TOKEN_ENCRYPTION_KEY
-complete sensitive upstream payloads
-```
+## CI and repository hygiene
 
-## Synchronization safety
+- `.env.example` contains names and documentation only.
+- `.env*` secrets remain untracked.
+- PSN fixtures are fabricated/sanitized.
+- CI never contacts PSN.
+- crypto tests use deterministic fake keys and fake tokens.
+- PostgreSQL CI validates RLS and credential-table privilege boundaries.
+- dependency installation is frozen through the committed lockfile.
 
-A transient upstream failure must not corrupt durable player state. In particular:
+## Incident response
 
-- existing trophies are not deleted on partial responses;
-- `earned=true` does not silently regress to false;
-- known earned timestamps are preserved;
-- stale-but-valid data remains available when PSN is unavailable;
-- concurrent refreshes are coalesced or locked.
+If authorization material may have leaked, revoke or replace upstream credentials, rotate TrophyBridge encryption keys as needed, inspect logs/repository history without reproducing the secret, and invalidate public share links if relevant.
 
-M1 implements the durable monotonic trophy rules and the `sync_targets` persistence needed for later synchronization locking/cooldowns. The actual lock-acquisition algorithm belongs to the sync milestones.
-
-## Database verification
-
-GitHub Actions provisions a disposable PostgreSQL 17 service and applies every migration before running SQL invariant tests.
-
-The suite verifies RLS enablement, monotonic trophy state, idempotent UPSERT behavior, cross-entity foreign keys, event deduplication, and base/DLC separation. It does not require a real Supabase project or PSN credentials.
-
-## Repository hygiene
-
-The repository is designed to be public.
-
-Required controls:
-
-- real `.env` files ignored;
-- `.env.example` contains names only, never values;
-- PSN test fixtures are anonymized;
-- CI never requires a real PSN account;
-- database CI uses fabricated identities only;
-- security-sensitive failures are documented without publishing credentials.
-
-## Incident response principles
-
-If a credential is suspected to have leaked:
-
-1. revoke or rotate it at the upstream provider;
-2. rotate TrophyBridge encryption material if affected;
-3. invalidate relevant share links if public exposure is possible;
-4. inspect logs and repository history;
-5. document the incident and corrective action without reproducing the secret.
-
-## Security review milestone
-
-M10 includes an explicit security review before the first release tag. Security-sensitive implementation decisions made earlier should receive ADRs when they materially alter this model.
+M10 performs the explicit pre-release security review; security-sensitive changes before then require tests and an ADR.
