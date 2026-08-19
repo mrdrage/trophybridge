@@ -32,6 +32,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Export generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-lock-m2
+          path: pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Lint
         run: pnpm lint
 
