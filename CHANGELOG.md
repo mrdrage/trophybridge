@@ -1,53 +1,39 @@
 # Changelog
 
-All notable changes to TrophyBridge will be documented in this file.
-
-The project follows semantic versioning once public releases begin. During the `0.x` phase, breaking changes are still possible.
+All notable changes to TrophyBridge are documented here. Public semantic-versioned releases begin after the `0.x` development phase.
 
 ## [Unreleased]
 
 ### Added
 
-- Next.js and TypeScript foundation.
-- Public health endpoint under `/api/public/v1/health`.
-- Provider-neutral `PsnProvider` contract and deterministic mock implementation.
-- Vitest unit testing and Playwright smoke testing.
-- GitHub Actions CI for lint, typecheck, tests, build, browser smoke test, and PostgreSQL domain verification.
-- Initial architecture, API, data-model, security, and PSN integration documentation.
-- Architecture Decision Records for the v0.1 foundation, database invariants, and PSN adapter/versioning boundary.
-- Project handoff document for continuity across development sessions.
-- M1 PostgreSQL/Supabase domain migrations for accounts, games, trophy groups, trophies, player state, synchronization, progress events, share links, and sync targets.
-- Database constraints and indexes for provider identity, one base trophy group per game, title-wide trophy IDs, cross-entity integrity, valid progress ranges, and event deduplication.
-- Database-level monotonic earned-state protection with preservation of the earliest known valid trophy timestamp.
-- PostgreSQL integration tests running against a disposable PostgreSQL 17 service in CI.
-- Row Level Security enabled on every application table in the exposed `public` schema.
-- M2 `PsnApiProvider` implementation over an exact pinned `psn-api` dependency.
-- Runtime-validated mapping for title lists, trophy groups, trophy metadata, and user trophy state.
-- Pagination handling for title and trophy endpoints, including repeated-offset protection.
-- PS5 `trophy2` and legacy `trophy` service propagation.
-- Base/DLC/unknown trophy-group classification and shared-platform normalization.
-- Provider error normalization with stable retryability semantics.
-- Configurable `Accept-Language` propagation for PSN trophy calls.
-- Sanitized PSN fixture payloads and unit/contract coverage with no live PSN access in CI.
-- Versioned `pnpm-lock.yaml` for reproducible dependency resolution.
+- M0 Next.js/TypeScript foundation, public health endpoint, tests, CI, and architecture documentation.
+- M1 PostgreSQL/Supabase factual trophy model with database constraints, RLS, monotonic earned-state protection, event deduplication, and PostgreSQL invariant tests.
+- M2 provider-neutral PlayStation contract and real `PsnApiProvider` over pinned `psn-api` 2.18.1.
+- M2 pagination, `trophy2`/`trophy` propagation, runtime provider validation, stable provider errors, locale headers, and sanitized PSN fixtures.
+- M3 Supabase SSR authentication foundation with GitHub OAuth, private-session `proxy.ts`, and authenticated dashboard.
+- M3 transient NPSSO bootstrap, exact PSN identity resolution, and `isMe` verification.
+- M3 server-only `psn_credentials` persistence with AES-256-GCM encryption, fresh IVs, authentication tags, account-bound AAD, key versioning, refresh expiry, and rotation support.
+- M3 PSN refresh/disconnect lifecycle and `PsnConnectionService.createProviderForOwner()` boundary for future synchronization.
+- M3 owner-scoped `psn_accounts` read policy while credential ciphertext remains inaccessible to browser roles.
+- M3 private connect/status/refresh/disconnect API routes with non-cacheable responses.
+- M3 authentication, crypto, credential lifecycle, RLS/privilege, and connection-state tests.
+- Italian `it-IT` trophy metadata locale as the pilot/default configuration.
+- Exact `@supabase/ssr` and `@supabase/supabase-js` dependency locking.
 
 ### Changed
 
-- `docs/DATA_MODEL.md` is the definitive documented representation of the executable M1 schema rather than a provisional plan.
-- `docs/PSN_INTEGRATION.md` now documents the implemented M2 adapter contract, provider limitations, and test strategy.
-- `PsnProvider` now carries aggregate trophy counts, group kind, rarity, earned rate, and conservative progress fields needed by later sync milestones.
-- `psn-api` is pinned to `2.18.1`; future upgrades require explicit contract validation.
-- CI dependency installation now uses `pnpm install --frozen-lockfile`.
-- Unsupported current numeric trophy progress remains `null` rather than being inferred from a PS5 progress target.
-- The next implementation milestone is M3 · Authentication.
+- TrophyBridge authentication routes now distinguish Supabase owner identity from verified PSN identity.
+- `psn_accounts` now stores `preferred_locale` and v0.1 enforces one connected PSN account per TrophyBridge owner.
+- The committed lockfile is refreshed for M3 dependencies and CI returns to frozen dependency installation.
+- M4 Library Sync is the next implementation milestone after M3 activation.
 
 ### Security
 
-- Environment contract excludes PSN secrets from source control.
-- Public API design is read-only and token based.
-- Public application tables use deny-by-default RLS until owner-scoped policies are introduced with authentication in M3.
-- Critical trophy facts are protected at the persistence boundary even if an application writer later sends regressive data.
-- M2 automated tests use fabricated provider identities and never require NPSSO, access tokens, refresh tokens, or live PlayStation Network calls.
+- NPSSO and PSN access tokens are never persisted.
+- Refresh tokens are encrypted before persistence and are never exposed through public/private responses.
+- Supabase service-role and encryption keys remain server-only environment values.
+- Authentication/session responses are private and non-cacheable.
+- CI remains fully offline with respect to PlayStation Network and uses fabricated credentials only.
 
 ## [0.1.0] - Unreleased
 

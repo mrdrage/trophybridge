@@ -2,73 +2,79 @@
 
 A privacy-first bridge between PlayStation trophy data and AI-assisted platinum tracking.
 
-TrophyBridge is being built to synchronize PlayStation trophy progress, normalize base-game and DLC data, and expose a stable read-only API that an AI assistant can use to guide a player toward a platinum trophy.
+TrophyBridge synchronizes factual PlayStation trophy state, separates base-game progress from additional trophy groups, and is being built to expose a stable read-only API that an AI assistant can use to guide a player toward a platinum.
 
-> Status: **M2 · PSN Provider complete**. `v0.1.0` remains in development; the next milestone is **M3 · Authentication**.
+> Status: **M3 · Authentication implementation complete**. Production activation still requires a real Supabase project configuration and a user-initiated PSN connection. The next implementation milestone is **M4 · Library Sync**.
 
 ## MVP goal
 
-The first release is complete when a user can connect a PSN account, sync a game such as Final Fantasy XVI, expose a revocable public share link, and let a fresh AI conversation understand the current platinum progress without screenshots or manual trophy lists.
+The first release is complete when a user can sign in, connect a PSN account, synchronize a game such as Final Fantasy XVI, expose a revocable public share link, and let a fresh AI conversation understand current platinum progress without screenshots or manual trophy lists.
 
 ## Architecture
 
 ```text
-PlayStation Network
-        |
-        v
-   PsnApiProvider
-        |
-        v
-    PsnProvider
-        |
-        v
-  TrophyBridge Core
-        |
-        v
-    PostgreSQL
-     /      \
-Dashboard  Public API
-               |
-               v
-              AI
+GitHub OAuth -> Supabase Auth
+                    |
+                    v
+User -> private TrophyBridge dashboard -> transient NPSSO bootstrap
+                                      |
+                                      v
+                              PSN authorization
+                                      |
+                              encrypted refresh token
+                                      |
+                                      v
+PlayStation Network -> PsnApiProvider -> PsnProvider -> TrophyBridge Core
+                                                        |
+                                                        v
+                                                   PostgreSQL
+                                                    /      \
+                                             Dashboard    Public API
+                                                            |
+                                                            v
+                                                           AI
 ```
 
 ## Core principles
 
-- Privacy first: secrets never enter the public API or repository.
-- Provider isolation: the application depends on `PsnProvider`, not directly on a single PSN library.
-- External payloads are runtime-validated before entering the TrophyBridge domain.
-- Base game and DLC are structurally separated for platinum calculations.
-- Trophy state is monotonic: once a trophy is known to be earned, an incomplete sync cannot silently un-earn it.
-- Unsupported provider data stays unknown/null rather than being invented.
-- Public sharing is read-only, revocable, non-indexed, and token based.
-- The API is versioned and includes an AI-oriented context endpoint.
-- PostgreSQL protects critical domain invariants instead of trusting every future application writer to reproduce them perfectly.
+- Secrets never enter the public API or repository.
+- NPSSO is bootstrap-only and is never persisted.
+- PSN access tokens are short-lived runtime values and are never persisted.
+- The durable PSN refresh token is encrypted server-side with AES-256-GCM, account-bound authenticated data, and key versioning.
+- Application code depends on `PsnProvider`, not raw `psn-api` payloads.
+- External provider payloads are runtime-validated.
+- Base-game and additional trophy groups are structurally separated.
+- Unsupported provider data stays `null`/unknown rather than being invented.
+- Trophy state is monotonic at the persistence layer.
+- Public sharing will be read-only, revocable, non-indexed, and token based.
 
 ## Stack
 
 - TypeScript
-- Next.js App Router
-- pnpm
+- Next.js App Router and `proxy.ts`
+- pnpm 11.20.0
 - PostgreSQL via Supabase
-- Supabase Auth
+- Supabase Auth + `@supabase/ssr`
+- GitHub OAuth for TrophyBridge sign-in
 - `psn-api` 2.18.1 behind `PsnApiProvider`
+- AES-256-GCM through Node.js `crypto`
 - Zod
 - Vitest
 - Playwright
 - GitHub Actions
-- Vercel
+- Vercel planned for deployment
 
 ## Local development
 
 Requirements: Node.js 22.13+ (Node 24 recommended and pinned by `.node-version`) and pnpm 11.20.0.
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+cp .env.example .env.local
 pnpm dev
 ```
 
-Application quality gate:
+Application gate:
 
 ```bash
 pnpm lint
@@ -78,62 +84,82 @@ pnpm build
 pnpm test:e2e
 ```
 
-Database invariant suite, using a disposable PostgreSQL database:
+Database invariant suite:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm test:db
 ```
 
-GitHub Actions runs the database migrations and invariant suite against PostgreSQL 17 in addition to the application checks.
+## M3 environment contract
 
-The public foundation health endpoint is available at `/api/public/v1/health`.
+Required for live authentication:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY
+TOKEN_ENCRYPTION_KEY
+TOKEN_ENCRYPTION_KEY_VERSION
+APP_URL
+```
+
+Optional during encryption-key rotation:
+
+```text
+TOKEN_ENCRYPTION_PREVIOUS_KEYS_JSON
+```
+
+Trophy metadata locale defaults to:
+
+```text
+PSN_TROPHY_LOCALE=it-IT
+```
+
+The encryption key must decode from base64 to exactly 32 bytes. Real values belong only in local/deployment secret stores, never in Git.
+
+## Authentication flow
+
+1. The TrophyBridge user signs in through GitHub OAuth backed by Supabase Auth.
+2. An authenticated private dashboard accepts the PSN Online ID and NPSSO.
+3. The server exchanges NPSSO for PlayStation tokens.
+4. TrophyBridge resolves the exact Online ID and verifies the returned PSN profile is the authenticated account (`isMe=true`).
+5. NPSSO is discarded.
+6. The refresh token is encrypted and persisted server-side; the access token remains in memory only.
+7. Later operations decrypt the refresh token, obtain a new short-lived access token, re-encrypt any rotated refresh token, and construct `PsnApiProvider` with the saved locale.
+8. Disconnect removes the credential without deleting already normalized trophy data.
+
+Private routes:
+
+```text
+POST /api/private/v1/psn/connect
+GET  /api/private/v1/psn/status
+POST /api/private/v1/psn/refresh
+POST /api/private/v1/psn/disconnect
+```
+
+All private authentication responses are non-cacheable.
 
 ## Development roadmap
 
 - ✅ **M0 Foundation**: project skeleton, CI, tests, documentation.
 - ✅ **M1 Domain Model**: PostgreSQL schema, migrations, constraints, RLS, and database invariant tests.
-- ✅ **M2 PSN Provider**: provider mapping, pagination, validation, fixtures, error normalization, and real `psn-api` adapter behind `PsnProvider`.
-- **M3 Authentication**: PSN connection and encrypted credential storage.
-- **M4 Library Sync**: import PlayStation games.
-- **M5 Trophy Sync**: game groups, trophies, earned state and DLC separation.
+- ✅ **M2 PSN Provider**: mapping, pagination, validation, fixtures, error normalization, and real adapter.
+- ✅ **M3 Authentication implementation**: Supabase SSR auth, PSN connection lifecycle, encrypted durable refresh credentials, private routes, tests. Live activation requires external Supabase/PSN configuration.
+- **M4 Library Sync**: import PlayStation games into the M1 persistence model.
+- **M5 Trophy Sync**: groups, trophies, earned state, and base/additional separation.
 - **M6 Progress Events**: detect newly earned trophies.
-- **M7 Public Share**: stable, revocable read-only URLs.
+- **M7 Public Share**: stable revocable read-only URLs.
 - **M8 AI Context**: compact API for AI-assisted platinum guidance.
-- **M9 Dashboard**: production MVP UI.
-- **M10 Hardening**: security review, observability and release documentation.
+- **M9 Dashboard**: production MVP UX.
+- **M10 Hardening**: security review, observability, release documentation.
 
-## M1 database model
+## Persistence
 
-The executable schema lives under [`supabase/migrations/`](./supabase/migrations). M1 creates:
+M1 creates the factual trophy model. M3 adds `psn_credentials`, a server-only one-to-one credential record for each connected `psn_accounts` row, plus `preferred_locale` on the account. Browser roles can read only their own non-secret connection metadata; browser roles have no privilege on credential ciphertext.
 
-- `psn_accounts`
-- `games`
-- `account_games`
-- `trophy_groups`
-- `trophies`
-- `player_trophies`
-- `sync_runs`
-- `progress_events`
-- `share_links`
-- `sync_targets`
-
-Important guarantees include idempotent player-trophy UPSERTs, monotonic earned state, preservation of trusted earned timestamps, one base trophy group per game, title-wide trophy IDs, deduplicated progress events, and deny-by-default RLS on the exposed application tables.
-
-See [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md) for the definitive model.
-
-## M2 PSN provider
-
-`PsnApiProvider` translates PlayStation trophy responses into TrophyBridge-owned types. It handles title/trophy pagination, propagates `trophy2` for PS5 and `trophy` for legacy platforms, sends a configurable `Accept-Language`, and normalizes provider failures into stable application error codes.
-
-Sanitized fixtures under `tests/fixtures/psn/` exercise the adapter without contacting PSN in CI. Current numeric trophy progress is not exposed by the pinned `psn-api` user-trophy contract, so TrophyBridge stores the target when available but never fabricates a current value.
-
-See [`docs/PSN_INTEGRATION.md`](./docs/PSN_INTEGRATION.md) for the exact provider contract and limitations.
+See [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md), [`docs/SECURITY.md`](./docs/SECURITY.md), and [`docs/PSN_INTEGRATION.md`](./docs/PSN_INTEGRATION.md).
 
 ## Documentation
-
-Project decisions and contracts live under [`docs/`](./docs). The continuously maintained [`PROJECT_HANDOFF.md`](./PROJECT_HANDOFF.md) makes the project portable across development sessions and fresh AI conversations.
-
-Key documents:
 
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 - [`docs/API.md`](./docs/API.md)
@@ -142,11 +168,8 @@ Key documents:
 - [`docs/PSN_INTEGRATION.md`](./docs/PSN_INTEGRATION.md)
 - [`docs/decisions/`](./docs/decisions)
 - [`CHANGELOG.md`](./CHANGELOG.md)
-
-## Security
-
-Never commit PSN credentials, NPSSO values, refresh tokens, Supabase service-role keys, encryption keys, or real `.env` files. See [`docs/SECURITY.md`](./docs/SECURITY.md).
+- [`PROJECT_HANDOFF.md`](./PROJECT_HANDOFF.md)
 
 ## Disclaimer
 
-TrophyBridge is an independent project and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. PSN integration is isolated behind an adapter because community-documented interfaces may change.
+TrophyBridge is an independent project and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. The PSN integration is isolated because community-documented interfaces can change.
