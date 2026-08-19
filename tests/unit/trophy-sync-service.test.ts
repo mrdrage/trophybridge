@@ -274,7 +274,11 @@ describe("TrophySyncService", () => {
     const repository = new MemoryRepository();
     const failing = provider({
       getUserTrophies: async () => {
-        throw new PsnProviderError("UPSTREAM_UNAVAILABLE", { retryable: true });
+        throw new PsnProviderError(
+          "UPSTREAM_UNAVAILABLE",
+          "Fixture upstream failure",
+          true,
+        );
       },
     });
 
