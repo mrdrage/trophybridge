@@ -1,13 +1,11 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  randomBytes,
-  type BinaryLike,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+
+type AuthenticatedData = string | Buffer;
+type Environment = Record<string, string | undefined>;
 
 export interface EncryptedSecret {
   ciphertext: string;
@@ -39,6 +37,10 @@ function parseVersion(value: string | undefined): number {
   return parsed;
 }
 
+function aadBuffer(value: AuthenticatedData): Buffer {
+  return typeof value === "string" ? Buffer.from(value, "utf8") : value;
+}
+
 export class TokenCipher {
   constructor(
     private readonly keys: ReadonlyMap<number, Buffer>,
@@ -49,7 +51,7 @@ export class TokenCipher {
     }
   }
 
-  encrypt(plaintext: string, aad: BinaryLike): EncryptedSecret {
+  encrypt(plaintext: string, aad: AuthenticatedData): EncryptedSecret {
     if (!plaintext) throw new Error("Cannot encrypt an empty credential");
 
     const key = this.keys.get(this.activeKeyVersion);
@@ -57,7 +59,7 @@ export class TokenCipher {
 
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv(ALGORITHM, key, iv);
-    cipher.setAAD(aad);
+    cipher.setAAD(aadBuffer(aad));
 
     const ciphertext = Buffer.concat([
       cipher.update(plaintext, "utf8"),
@@ -72,7 +74,7 @@ export class TokenCipher {
     };
   }
 
-  decrypt(envelope: EncryptedSecret, aad: BinaryLike): string {
+  decrypt(envelope: EncryptedSecret, aad: AuthenticatedData): string {
     const key = this.keys.get(envelope.keyVersion);
     if (!key) {
       throw new CredentialDecryptionError(
@@ -86,7 +88,7 @@ export class TokenCipher {
         key,
         Buffer.from(envelope.iv, "base64"),
       );
-      decipher.setAAD(aad);
+      decipher.setAAD(aadBuffer(aad));
       decipher.setAuthTag(Buffer.from(envelope.authTag, "base64"));
 
       const plaintext = Buffer.concat([
@@ -102,7 +104,7 @@ export class TokenCipher {
 }
 
 export function createTokenCipherFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Environment = process.env,
 ): TokenCipher {
   const activeRaw = env.TOKEN_ENCRYPTION_KEY;
   if (!activeRaw) throw new Error("TOKEN_ENCRYPTION_KEY is required");
