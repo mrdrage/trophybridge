@@ -29,6 +29,7 @@ The project follows semantic versioning once public releases begin. During the `
 - Provider error normalization with stable retryability semantics.
 - Configurable `Accept-Language` propagation for PSN trophy calls.
 - Sanitized PSN fixture payloads and unit/contract coverage with no live PSN access in CI.
+- Versioned `pnpm-lock.yaml` for reproducible dependency resolution.
 
 ### Changed
 
@@ -36,6 +37,7 @@ The project follows semantic versioning once public releases begin. During the `
 - `docs/PSN_INTEGRATION.md` now documents the implemented M2 adapter contract, provider limitations, and test strategy.
 - `PsnProvider` now carries aggregate trophy counts, group kind, rarity, earned rate, and conservative progress fields needed by later sync milestones.
 - `psn-api` is pinned to `2.18.1`; future upgrades require explicit contract validation.
+- CI dependency installation now uses `pnpm install --frozen-lockfile`.
 - Unsupported current numeric trophy progress remains `null` rather than being inferred from a PS5 progress target.
 - The next implementation milestone is M3 · Authentication.
 
