@@ -3,6 +3,7 @@ import {
   exchangeNpssoForAccessCode,
   exchangeRefreshTokenForAuthTokens,
   getProfileFromAccountId,
+  getProfileFromUserName,
   makeUniversalSearch,
 } from "psn-api";
 import { z } from "zod";
@@ -19,6 +20,10 @@ export interface PsnAuthCalls {
     searchTerm: string,
     domain: "SocialAllAccounts",
   ): Promise<unknown>;
+  getProfileFromUserName(
+    authorization: { accessToken: string },
+    onlineId: string,
+  ): Promise<unknown>;
   getProfileFromAccountId(
     authorization: { accessToken: string },
     accountId: string,
@@ -31,6 +36,7 @@ const defaultCalls: PsnAuthCalls = {
   exchangeRefreshTokenForAuthTokens,
   makeUniversalSearch: (authorization, searchTerm, domain) =>
     makeUniversalSearch(authorization, searchTerm, domain),
+  getProfileFromUserName,
   getProfileFromAccountId,
 };
 
@@ -72,6 +78,17 @@ const socialSearchSchema = z
         })
         .passthrough(),
     ),
+  })
+  .passthrough();
+
+const legacyProfileSchema = z
+  .object({
+    profile: z
+      .object({
+        accountId: z.string().min(1),
+        onlineId: z.string().min(1),
+      })
+      .passthrough(),
   })
   .passthrough();
 
@@ -166,34 +183,46 @@ export class PsnAuthClient {
     accessToken: string,
     claimedOnlineId: string,
   ): Promise<PsnAccount> {
-    let rawSearch: unknown;
+    const authorization = { accessToken };
+    let accountId: string | null = null;
+
     try {
-      rawSearch = await this.calls.makeUniversalSearch(
-        { accessToken },
+      const rawSearch = await this.calls.makeUniversalSearch(
+        authorization,
         claimedOnlineId,
         "SocialAllAccounts",
       );
-    } catch {
-      throw new PsnConnectionError("UPSTREAM_UNAVAILABLE", { retryable: true });
+      const search = socialSearchSchema.safeParse(rawSearch);
+      if (!search.success) throw new PsnConnectionError("INVALID_RESPONSE");
+
+      const match = search.data.domainResponses
+        .flatMap((domain) => domain.results)
+        .find((result) => sameOnlineId(result.socialMetadata.onlineId, claimedOnlineId));
+      accountId = match?.socialMetadata.accountId ?? null;
+    } catch (error) {
+      if (error instanceof PsnConnectionError) throw error;
+      // Search is best-effort: some valid owner profiles are omitted by PSN search.
     }
 
-    const search = socialSearchSchema.safeParse(rawSearch);
-    if (!search.success) {
-      throw new PsnConnectionError("INVALID_RESPONSE");
+    if (!accountId) {
+      let rawLegacyProfile: unknown;
+      try {
+        rawLegacyProfile = await this.calls.getProfileFromUserName(authorization, claimedOnlineId);
+      } catch {
+        throw new PsnConnectionError("IDENTITY_NOT_FOUND");
+      }
+
+      const legacyProfile = legacyProfileSchema.safeParse(rawLegacyProfile);
+      if (!legacyProfile.success) throw new PsnConnectionError("INVALID_RESPONSE");
+      if (!sameOnlineId(legacyProfile.data.profile.onlineId, claimedOnlineId)) {
+        throw new PsnConnectionError("IDENTITY_MISMATCH");
+      }
+      accountId = legacyProfile.data.profile.accountId;
     }
-
-    const match = search.data.domainResponses
-      .flatMap((domain) => domain.results)
-      .find((result) => sameOnlineId(result.socialMetadata.onlineId, claimedOnlineId));
-
-    if (!match) throw new PsnConnectionError("IDENTITY_NOT_FOUND");
 
     let rawProfile: unknown;
     try {
-      rawProfile = await this.calls.getProfileFromAccountId(
-        { accessToken },
-        match.socialMetadata.accountId,
-      );
+      rawProfile = await this.calls.getProfileFromAccountId(authorization, accountId);
     } catch {
       throw new PsnConnectionError("UPSTREAM_UNAVAILABLE", { retryable: true });
     }
@@ -210,7 +239,7 @@ export class PsnAuthClient {
     }
 
     return {
-      accountId: match.socialMetadata.accountId,
+      accountId,
       onlineId: profile.data.onlineId,
     };
   }
