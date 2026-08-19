@@ -16,7 +16,7 @@ export default function HomePage() {
           and expose a revocable public API so an AI assistant can understand exactly
           where a player stands on the road to a platinum.
         </p>
-        <div className="status">M0 · Foundation in progress</div>
+        <div className="status">M0 · Foundation complete</div>
       </section>
 
       <section className="principles" aria-label="Project principles">

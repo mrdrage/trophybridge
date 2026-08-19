@@ -4,13 +4,13 @@ A privacy-first bridge between PlayStation trophy data and AI-assisted platinum 
 
 TrophyBridge is being built to synchronize PlayStation trophy progress, normalize base-game and DLC data, and expose a stable read-only API that an AI assistant can use to guide a player toward a platinum trophy.
 
-> Status: early foundation (`v0.1.0` in development).
+> Status: **M0 · Foundation complete**. `v0.1.0` remains in development; the next milestone is **M1 · Domain Model**.
 
 ## MVP goal
 
 The first release is complete when a user can connect a PSN account, sync a game such as Final Fantasy XVI, expose a revocable public share link, and let a fresh AI conversation understand the current platinum progress without screenshots or manual trophy lists.
 
-## Planned architecture
+## Architecture
 
 ```text
 PlayStation Network
@@ -52,9 +52,30 @@ Dashboard  Public API
 - GitHub Actions
 - Vercel
 
+## Local development
+
+Requirements: Node.js 22.13+ (Node 24 recommended and pinned by `.node-version`) and pnpm 11.20.0.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Quality gate:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:e2e
+```
+
+The public foundation health endpoint is available at `/api/public/v1/health`.
+
 ## Development roadmap
 
-- **M0 Foundation**: project skeleton, CI, tests, documentation.
+- ✅ **M0 Foundation**: project skeleton, CI, tests, documentation.
 - **M1 Domain Model**: database schema and migrations.
 - **M2 PSN Provider**: mock adapter, then real `psn-api` adapter.
 - **M3 Authentication**: PSN connection and encrypted credential storage.
@@ -68,12 +89,22 @@ Dashboard  Public API
 
 ## Documentation
 
-Project decisions and contracts live under [`docs/`](./docs). A continuously maintained [`PROJECT_HANDOFF.md`](./PROJECT_HANDOFF.md) will make the project portable across development sessions and AI conversations.
+Project decisions and contracts live under [`docs/`](./docs). The continuously maintained [`PROJECT_HANDOFF.md`](./PROJECT_HANDOFF.md) makes the project portable across development sessions and fresh AI conversations.
+
+Key documents:
+
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- [`docs/API.md`](./docs/API.md)
+- [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)
+- [`docs/SECURITY.md`](./docs/SECURITY.md)
+- [`docs/PSN_INTEGRATION.md`](./docs/PSN_INTEGRATION.md)
+- [`docs/decisions/`](./docs/decisions)
+- [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## Security
 
-Never commit PSN credentials, NPSSO values, refresh tokens, Supabase service-role keys, encryption keys, or real `.env` files. See [`docs/SECURITY.md`](./docs/SECURITY.md) once the foundation milestone lands.
+Never commit PSN credentials, NPSSO values, refresh tokens, Supabase service-role keys, encryption keys, or real `.env` files. See [`docs/SECURITY.md`](./docs/SECURITY.md).
 
 ## Disclaimer
 
-TrophyBridge is an independent project and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. PSN integration will be isolated behind an adapter because community-documented interfaces may change.
+TrophyBridge is an independent project and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. PSN integration is isolated behind an adapter because community-documented interfaces may change.
