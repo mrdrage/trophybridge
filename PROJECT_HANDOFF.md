@@ -42,7 +42,7 @@ Migrations create `psn_accounts`, `games`, `account_games`, `trophy_groups`, `tr
 
 `PsnApiProvider` provides title/group/trophy/user-trophy reads with pagination, PS5 `trophy2` and legacy `trophy`, runtime validation, stable errors, locale headers, sanitized fixtures, and conservative numeric progress semantics.
 
-### M3 Authentication implementation
+### M3 Authentication
 
 Implemented files include:
 
@@ -64,6 +64,7 @@ app/auth/callback/route.ts
 app/dashboard/*
 app/api/private/v1/psn/{connect,status,refresh,disconnect}/*
 supabase/migrations/20260819133000_m3_authentication.sql
+supabase/migrations/20260819134000_m3_database_hardening.sql
 ```
 
 Authentication lifecycle:
@@ -94,9 +95,29 @@ Connection states are `connected`, `refreshing`, `reauth_required`, and `error`.
 
 CI uses fake auth calls, fake tokens, fake encryption keys, and PostgreSQL fixtures. It never calls PSN.
 
-## External activation still required
+## Real Supabase project state
 
-The repository does not contain a real Supabase project or real secrets. Before the first live PSN smoke test, configure:
+A real Supabase project is connected and healthy in `eu-west-3` (project ref `aecehligohfsjqbgoeeo`). The following migrations have been applied successfully:
+
+```text
+m1_domain_model
+m1_integrity_refinements
+m3_authentication
+m3_database_hardening
+```
+
+The M3 hardening migration changes the owner RLS policy to use `(select auth.uid())` and adds covering indexes for composite foreign keys detected by the Supabase performance advisor.
+
+Post-migration advisor status:
+
+- security: only informational `RLS Enabled No Policy` notices remain on tables that intentionally use deny-by-default/server-only access;
+- performance: missing-FK-index and `auth.uid()` init-plan warnings are resolved; remaining notices are unused-index informational messages expected while the database is new and empty.
+
+The project URL and publishable key are available through the connected Supabase project. Secret/service-role values are intentionally not written to Git, documentation, or chat.
+
+## Live activation still required
+
+M3 code and database schema are complete. Before the first live PSN smoke test, external secrets/configuration still need to be supplied:
 
 ```text
 NEXT_PUBLIC_SUPABASE_URL
@@ -108,9 +129,11 @@ PSN_TROPHY_LOCALE=it-IT
 APP_URL
 ```
 
-Configure GitHub OAuth in Supabase, apply the migrations to the real project, deploy or run TrophyBridge with those values, then enter NPSSO only in the private TrophyBridge dashboard. Never paste NPSSO into ChatGPT, GitHub, logs, screenshots, or documentation.
+GitHub OAuth must be enabled in Supabase Auth. Current official Supabase flow requires a GitHub OAuth App whose authorization callback URL is the Supabase Auth callback (`https://<project-ref>.supabase.co/auth/v1/callback`), then the GitHub client ID/secret are saved in Supabase Auth provider settings. The app's own `/auth/callback` must be in the Supabase redirect allow list for the PKCE return flow.
 
-A live connection is the final external verification of M3 before M4 imports the real game library.
+Never paste NPSSO, OAuth client secrets, service-role keys, refresh/access tokens, or the TrophyBridge encryption key into ChatGPT, GitHub issues, commits, logs, screenshots, or documentation.
+
+Once TrophyBridge is running with deployment secrets, the owner enters NPSSO only inside the private TrophyBridge dashboard. A successful real connection is the live smoke verification before M4 imports the real game library.
 
 ## M3/M4 boundary
 
@@ -143,8 +166,8 @@ Public output is allowlist-based and excludes all authentication material.
 - ✅ M0 Foundation
 - ✅ M1 Domain Model
 - ✅ M2 PSN Provider
-- ✅ M3 Authentication implementation
-- ⏳ M3 external activation/live owner smoke
+- ✅ M3 Authentication implementation and real Supabase schema
+- ⏳ M3 live OAuth/PSN owner smoke after deployment secrets are configured
 - M4 Library Sync
 - M5 Trophy Sync
 - M6 Progress Events

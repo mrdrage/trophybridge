@@ -4,7 +4,7 @@ A privacy-first bridge between PlayStation trophy data and AI-assisted platinum 
 
 TrophyBridge synchronizes factual PlayStation trophy state, separates base-game progress from additional trophy groups, and is being built to expose a stable read-only API that an AI assistant can use to guide a player toward a platinum.
 
-> Status: **M3 · Authentication implementation complete**. Production activation still requires a real Supabase project configuration and a user-initiated PSN connection. The next implementation milestone is **M4 · Library Sync**.
+> Status: **M3 · Authentication complete**. The production Supabase schema is applied. Live activation still requires GitHub OAuth provider credentials and deployment secrets. The next implementation milestone is **M4 · Library Sync**.
 
 ## MVP goal
 
@@ -139,12 +139,20 @@ POST /api/private/v1/psn/disconnect
 
 All private authentication responses are non-cacheable.
 
+## Supabase state
+
+The real Supabase project now has the M1 domain model, M1 integrity refinements, M3 authentication schema, and M3 database hardening applied. Browser access remains deny-by-default except for the owner-scoped non-secret `psn_accounts` read policy. Credential ciphertext remains server-only.
+
+Supabase advisors were checked after migration. Security reports only the intentional RLS-without-policy informational notices on server-only/deny-by-default tables. Performance warnings for missing foreign-key indexes and per-row `auth.uid()` evaluation were fixed; remaining notices are unused-index informational messages expected on a new empty database.
+
+Live activation still needs GitHub OAuth to be enabled in the Supabase Auth provider settings and the deployment environment values above. No OAuth client secret, service-role key, PSN credential, or encryption key belongs in this repository.
+
 ## Development roadmap
 
 - ✅ **M0 Foundation**: project skeleton, CI, tests, documentation.
 - ✅ **M1 Domain Model**: PostgreSQL schema, migrations, constraints, RLS, and database invariant tests.
 - ✅ **M2 PSN Provider**: mapping, pagination, validation, fixtures, error normalization, and real adapter.
-- ✅ **M3 Authentication implementation**: Supabase SSR auth, PSN connection lifecycle, encrypted durable refresh credentials, private routes, tests. Live activation requires external Supabase/PSN configuration.
+- ✅ **M3 Authentication**: Supabase SSR auth, PSN connection lifecycle, encrypted durable refresh credentials, private routes, tests, and production Supabase schema.
 - **M4 Library Sync**: import PlayStation games into the M1 persistence model.
 - **M5 Trophy Sync**: groups, trophies, earned state, and base/additional separation.
 - **M6 Progress Events**: detect newly earned trophies.

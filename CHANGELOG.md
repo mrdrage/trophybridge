@@ -19,13 +19,16 @@ All notable changes to TrophyBridge are documented here. Public semantic-version
 - M3 authentication, crypto, credential lifecycle, RLS/privilege, and connection-state tests.
 - Italian `it-IT` trophy metadata locale as the pilot/default configuration.
 - Exact `@supabase/ssr` and `@supabase/supabase-js` dependency locking.
+- M3 database hardening for optimized owner RLS evaluation and composite foreign-key covering indexes.
+- Real Supabase project initialized with M1, M1 integrity, M3 authentication, and M3 hardening migrations.
 
 ### Changed
 
 - TrophyBridge authentication routes now distinguish Supabase owner identity from verified PSN identity.
 - `psn_accounts` now stores `preferred_locale` and v0.1 enforces one connected PSN account per TrophyBridge owner.
-- The committed lockfile is refreshed for M3 dependencies and CI returns to frozen dependency installation.
-- M4 Library Sync is the next implementation milestone after M3 activation.
+- The committed lockfile is refreshed for M3 dependencies and CI uses frozen dependency installation.
+- Supabase advisor findings for missing composite-FK indexes and per-row `auth.uid()` evaluation were resolved; intentional deny-by-default RLS notices remain informational.
+- M4 Library Sync is the next implementation milestone after live OAuth/PSN smoke activation.
 
 ### Security
 
@@ -33,6 +36,7 @@ All notable changes to TrophyBridge are documented here. Public semantic-version
 - Refresh tokens are encrypted before persistence and are never exposed through public/private responses.
 - Supabase service-role and encryption keys remain server-only environment values.
 - Authentication/session responses are private and non-cacheable.
+- Browser roles have no privilege on `psn_credentials`.
 - CI remains fully offline with respect to PlayStation Network and uses fabricated credentials only.
 
 ## [0.1.0] - Unreleased
