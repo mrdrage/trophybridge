@@ -16,7 +16,7 @@ Free-tier quotas can change, so hosted-service limits are re-verified before pro
 
 The connected TrophyBridge organization is on the Supabase **Free** plan. TrophyBridge uses PostgreSQL, Supabase Auth, and the Data API through server-side clients.
 
-M4/M5 do not require Supabase Storage for PlayStation artwork, Edge Functions, paid database add-ons, or background workers.
+M4-M6 do not require Supabase Storage for PlayStation artwork, Edge Functions, paid database add-ons, queues, or background workers.
 
 ### GitHub
 
@@ -24,7 +24,7 @@ The repository is public. CI uses standard GitHub-hosted runners only. Larger pa
 
 ### Vercel
 
-Deployment is planned for Vercel **Hobby** only. No Pro plan, paid add-on, or paid observability product is required by M0-M5.
+Deployment is planned for Vercel **Hobby** only. No Pro plan, paid add-on, or paid observability product is required by M0-M6.
 
 ### PlayStation integration
 
@@ -45,7 +45,7 @@ The 2,000-title ceiling exists in both TypeScript and PostgreSQL. An oversized r
 
 A successful snapshot does not delete titles omitted by a later response. This preserves last-good state and avoids costly recovery imports.
 
-## M5 game-trophy guardrails
+## M5/M6 game-trophy guardrails
 
 ```text
 Default minimum interval per account/game: 300 seconds
@@ -55,11 +55,14 @@ Maximum user trophy states accepted per sync: 1000
 Stale-running-run recovery: 600 seconds
 Concurrent running game syncs per account/game: 1
 Trigger: authenticated manual action only
+Recent progress events read per game page: 20
 ```
 
-M5 is lazy by design. Synchronizing one title never deep-hydrates the other 195+ library titles.
+M5 is lazy by design. Synchronizing one title never deep-hydrates the other library titles.
 
-The TypeScript service validates exact group/trophy completeness before persistence. PostgreSQL repeats structural/size checks. Failed or inconsistent responses leave last-good rows intact instead of starting repair loops.
+M6 reuses exactly that bounded path. It compares the incoming complete snapshot with already-persisted player state and writes progress events in the same PostgreSQL transaction. There is no second PSN request, queue, webhook, cron, scheduled job, or always-on process for event detection.
+
+The TypeScript service validates exact group/trophy completeness before persistence. PostgreSQL repeats structural/size checks. Failed or inconsistent responses leave last-good rows intact and create no progress events.
 
 No automatic retry loop exists. Errors produce one bounded failed `sync_run` and return control to the owner.
 
@@ -73,17 +76,20 @@ TrophyBridge stores compact factual state needed for the product:
 - aggregate counters;
 - earned state/timestamps;
 - rarity/rate and honest numeric progress fields;
-- synchronization metadata.
+- synchronization metadata;
+- compact progress-event rows for newly observed trophy transitions.
 
 PSN images are referenced by upstream URL and are **not mirrored** into Supabase Storage.
 
-M5 adds text/numeric trophy rows only for games the owner explicitly selects. It does not bulk-fill the entire collection.
+M5/M6 add text/numeric trophy and event rows only for games the owner explicitly selects. M6 does not backfill historical events for trophies that were already earned before the baseline.
 
 ## Network discipline
 
-Normal dashboard reads come from PostgreSQL. Opening the library or a game page does not contact PSN.
+Normal dashboard reads come from PostgreSQL. Opening the library, a game page, or recent activity does not contact PSN.
 
 Current upstream calls happen only after an explicit authenticated sync action and are constrained by server-side cooldown/concurrency/size limits.
+
+M6 progress-event detection piggybacks on the same game snapshot. A page view cannot cause event synchronization.
 
 Scheduled polling is not allowed unless a later design proves it can remain inside the zero-cost envelope with hard application caps.
 
@@ -118,9 +124,9 @@ Upgrading to a paid tier is **not** an automatic fallback.
 
 The first live M4 sync imported 196 games successfully while remaining well inside the current database envelope.
 
-The M5 production schema adds no paid dependency or binary storage. Before the first live deep trophy import, the detailed tables are intentionally empty because M5 only hydrates selected games.
+The live M5 Final Fantasy XVI baseline persisted 3 trophy groups, 69 trophies, 69 player-state rows, and 17 earned states. This is compact relational data and requires no binary storage.
 
-Supabase post-M5 performance advisories contain only unused-index informational notices. Security advisories include expected RLS-without-policy informational notices on intentionally server-only tables and a separate Auth warning about leaked-password protection; the current TrophyBridge login path uses GitHub OAuth, so that warning is not caused by M5.
+M6 adds only small event rows when a later sync observes a real `earned=false -> earned=true` transition. The initial M5 baseline intentionally leaves `progress_events` empty, so historical trophies do not create an artificial storage burst.
 
 ## Verification cadence
 
