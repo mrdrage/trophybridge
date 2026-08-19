@@ -51,7 +51,7 @@ const titleTrophySchema = z
     trophyName: z.string().nullable().optional(),
     trophyDetail: z.string().nullable().optional(),
     trophyIconUrl: z.string().nullable().optional(),
-    trophyGroupId: z.string().nullable().optional(),
+    trophyGroupId: z.string().min(1),
   })
   .passthrough();
 
@@ -148,7 +148,7 @@ export function mapTrophy(payload: unknown): PsnTrophy {
 
   return {
     trophyId: trophy.trophyId,
-    groupId: nullIfBlank(trophy.trophyGroupId) ?? "unknown",
+    groupId: trophy.trophyGroupId,
     name: nullIfBlank(trophy.trophyName),
     description: nullIfBlank(trophy.trophyDetail),
     type: trophy.trophyType,
