@@ -73,6 +73,9 @@ function authCalls(): PsnAuthCalls {
         { results: [{ socialMetadata: { accountId: "123456789", onlineId: "mrdrage2" } }] },
       ],
     }),
+    getProfileFromUserName: async () => ({
+      profile: { accountId: "123456789", onlineId: "mrdrage2" },
+    }),
     getProfileFromAccountId: async () => ({ onlineId: "mrdrage2", isMe: true }),
   };
 }
