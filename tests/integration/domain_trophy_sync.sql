@@ -322,14 +322,11 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000501', true);
 
 do $$
-declare
-  target_game uuid;
 begin
-  select id into target_game from public.games where np_communication_id = 'NPWR50001_00';
   begin
     perform public.persist_game_trophy_snapshot(
       '10000000-0000-0000-0000-000000000501',
-      target_game,
+      '30000000-0000-0000-0000-000000000501',
       '[]'::jsonb,
       '[]'::jsonb,
       '[]'::jsonb,
