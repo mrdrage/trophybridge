@@ -23,7 +23,7 @@ TrophyBridge will:
 7. keep sanitized provider fixtures in CI and prohibit live PSN calls there;
 8. represent unsupported data as `null` instead of fabricating it.
 
-M2 pins version `2.18.0`.
+M2 pins version `2.18.1`.
 
 ## Consequences
 
