@@ -42,7 +42,7 @@ export default async function GameTrophyPage({
     <main className="shell dashboard-shell">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M5</p>
+          <p className="eyebrow">TrophyBridge · M6</p>
           <h1 className="section-title game-title">{detail.title}</h1>
           <p className="help game-platforms">
             {detail.platforms.join(" · ") || "Piattaforma non disponibile"}
@@ -76,7 +76,7 @@ export default async function GameTrophyPage({
             <small>Esclusi dal percorso platino</small>
           </div>
           <div className="trophy-summary-card">
-            <span>Ultimo sync M5</span>
+            <span>Ultimo sync</span>
             <strong className="summary-date">{formatDate(detail.lastTrophySyncAt)}</strong>
             <small>Solo su richiesta</small>
           </div>
@@ -87,9 +87,50 @@ export default async function GameTrophyPage({
         </div>
 
         <p className="help">
-          Il sync M5 è limitato a questo singolo gioco. Non idrata automaticamente i trofei
-          degli altri titoli della libreria.
+          M6 confronta ogni nuovo snapshot con lo stato già salvato. Il primo import di un
+          gioco crea solo la baseline; i trofei già ottenuti in passato non vengono falsamente
+          segnalati come nuovi.
         </p>
+      </section>
+
+      <section className="panel trophy-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Attività recente</p>
+            <h2>Nuovi trofei rilevati</h2>
+          </div>
+          <span className={`badge ${detail.recentEvents.length > 0 ? "good" : "muted"}`}>
+            {detail.recentEvents.length}
+          </span>
+        </div>
+
+        {detail.recentEvents.length === 0 ? (
+          <p className="notice">
+            Nessun nuovo trofeo rilevato dopo la baseline. Al prossimo trofeo ottenuto, un sync
+            creerà qui l&apos;evento corrispondente.
+          </p>
+        ) : (
+          <div className="trophy-list">
+            {detail.recentEvents.map((event) => (
+              <article className="trophy-row" key={event.id}>
+                <div className="trophy-state earned">✓</div>
+                <div className="trophy-copy">
+                  <div className="trophy-heading-line">
+                    <strong>{event.trophyName ?? `Trofeo #${event.psnTrophyId}`}</strong>
+                    <span className="trophy-type">
+                      {event.eventType === "platinum_earned" ? "platino" : event.trophyType}
+                    </span>
+                  </div>
+                  <small>
+                    {event.groupKind === "base" ? "Base game" : `Gruppo ${event.groupId}`}
+                    {` · ottenuto ${formatDate(event.occurredAt)}`}
+                    {` · rilevato ${formatDate(event.detectedAt)}`}
+                  </small>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel trophy-panel">
