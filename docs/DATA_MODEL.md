@@ -1,29 +1,56 @@
 # TrophyBridge Data Model
 
-This document defines the planned v0.1 persistence model. The definitive SQL migrations will be created in M1 after validating representative PSN payloads.
+M1 makes PostgreSQL the source of truth for the TrophyBridge v0.1 persistence model. The executable schema lives in [`supabase/migrations/20260819120000_m1_domain_model.sql`](../supabase/migrations/20260819120000_m1_domain_model.sql).
 
-## Entities
+The schema is intentionally provider-aware at its boundaries but uses TrophyBridge-owned UUID primary keys internally. PlayStation identifiers remain attributes, never application primary keys.
+
+## Relationship map
+
+```text
+auth.users
+   |
+   v
+psn_accounts
+   |\
+   | \---- sync_runs
+   | \---- share_links
+   | \---- progress_events
+   |
+   v
+account_games ------> games
+      |                |
+      |                v
+      |          trophy_groups
+      |                |
+      |                v
+      |             trophies
+      |                |
+      |                v
+      +---------- player_trophies
+      |
+      +---------- sync_targets
+```
+
+## Tables
 
 ### `psn_accounts`
 
-Represents a PlayStation account connected to a TrophyBridge user.
+One connected PlayStation identity owned by a TrophyBridge user.
 
-Planned fields:
+Important columns:
 
 ```text
 id uuid primary key
-owner_user_id uuid
+owner_user_id uuid -> auth.users(id)
 psn_online_id text
-psn_account_id text
+psn_account_id text unique
 auth_status text
 last_successful_sync_at timestamptz
 created_at timestamptz
 updated_at timestamptz
 ```
 
-`psn_account_id` is text because it is an identifier, not a numeric quantity.
-
-Allowed authentication states are expected to include:
+Allowed `auth_status` values:
 
 ```text
 connected
@@ -32,11 +59,11 @@ reauth_required
 error
 ```
 
-Authentication secrets do not belong in this table.
+Authentication secrets do not belong in this table. Encrypted refresh credentials are a later M3 concern.
 
 ### `games`
 
-Global normalized game catalog.
+Global normalized title catalog.
 
 ```text
 id uuid primary key
@@ -49,20 +76,22 @@ created_at timestamptz
 updated_at timestamptz
 ```
 
-Expected uniqueness:
+Provider identity is unique on:
 
 ```text
-unique (np_communication_id, np_service_name)
+(np_communication_id, np_service_name)
 ```
+
+This prevents PS4/PS5 service-name differences from being collapsed incorrectly.
 
 ### `account_games`
 
-Player-to-game relationship and aggregate state.
+Relationship between a PSN account and a known game, including lightweight aggregate state used by library sync.
 
 ```text
 id uuid primary key
-psn_account_id uuid
-game_id uuid
+psn_account_id uuid -> psn_accounts(id)
+game_id uuid -> games(id)
 progress_percent numeric
 earned_bronze integer
 earned_silver integer
@@ -77,13 +106,15 @@ last_seen_at timestamptz
 last_synced_at timestamptz
 ```
 
+The account/game pair is unique. Percentages are constrained to `0..100` and counters cannot be negative.
+
 ### `trophy_groups`
 
 Normalized PlayStation trophy groups.
 
 ```text
 id uuid primary key
-game_id uuid
+game_id uuid -> games(id)
 psn_group_id text
 name text
 icon_url text
@@ -92,7 +123,7 @@ created_at timestamptz
 updated_at timestamptz
 ```
 
-Expected `kind` values:
+Allowed `kind` values:
 
 ```text
 base
@@ -100,24 +131,24 @@ dlc
 unknown
 ```
 
-Initial mapping rule:
+Initial mapping:
 
 ```text
 PSN group "default" -> base
 numbered/additional groups -> dlc
-unexpected state -> unknown
+unexpected upstream state -> unknown
 ```
 
-The `unknown` state prevents the system from silently guessing when upstream behavior changes.
+The database enforces at most one `base` group per game with a partial unique index. A base group must use PSN group id `default`.
 
 ### `trophies`
 
-Normalized trophy metadata independent of a player.
+Normalized trophy metadata independent of the player.
 
 ```text
 id uuid primary key
-game_id uuid
-trophy_group_id uuid
+game_id uuid -> games(id)
+trophy_group_id uuid -> trophy_groups(id)
 psn_trophy_id integer
 name text
 description text
@@ -130,7 +161,7 @@ created_at timestamptz
 updated_at timestamptz
 ```
 
-Expected trophy types:
+Allowed trophy types:
 
 ```text
 bronze
@@ -139,26 +170,24 @@ gold
 platinum
 ```
 
-The exact unique key will be finalized against real payloads. Preferred candidates are:
+The definitive provider key is:
 
 ```text
 unique (game_id, psn_trophy_id)
 ```
 
-or, if IDs repeat across groups:
+This is no longer provisional. The upstream `psn-api` Trophy model documents `trophyId` as unique within the title, not merely within a trophy group.
 
-```text
-unique (game_id, trophy_group_id, psn_trophy_id)
-```
+A composite foreign key also guarantees that `trophy_group_id` belongs to the same `game_id`; inconsistent cross-game rows cannot be persisted.
 
 ### `player_trophies`
 
-Current player state for one trophy.
+Current state of one trophy for one PSN account.
 
 ```text
 id uuid primary key
-psn_account_id uuid
-trophy_id uuid
+psn_account_id uuid -> psn_accounts(id)
+trophy_id uuid -> trophies(id)
 earned boolean
 earned_at timestamptz
 progress_value numeric
@@ -169,46 +198,28 @@ last_seen_at timestamptz
 updated_at timestamptz
 ```
 
-Expected uniqueness:
+Unique key:
 
 ```text
-unique (psn_account_id, trophy_id)
+(psn_account_id, trophy_id)
 ```
 
-Updates use UPSERT semantics.
+This is the idempotency anchor for trophy synchronization. Sync code can use `INSERT ... ON CONFLICT ... DO UPDATE` repeatedly without multiplying state rows.
 
-### `progress_events`
+A database trigger protects the two most important monotonic facts:
 
-Append-oriented event history for meaningful state changes.
-
-```text
-id uuid primary key
-psn_account_id uuid
-game_id uuid
-trophy_id uuid nullable
-event_type text
-occurred_at timestamptz
-detected_at timestamptz
-sync_run_id uuid
-```
-
-Initial event types:
-
-```text
-game_discovered
-trophy_earned
-platinum_earned
-```
-
-`occurred_at` means when the upstream data says the event happened. `detected_at` means when TrophyBridge first observed it.
+- once `earned=true`, a later update cannot silently turn it back to `false`;
+- an existing valid `earned_at` is not replaced by a later or missing timestamp;
+- if a later sync provides an earlier valid timestamp, the earlier timestamp is accepted as the more precise historical fact.
 
 ### `sync_runs`
 
-Audit and diagnostics for synchronization attempts.
+Audit record for synchronization attempts.
 
 ```text
 id uuid primary key
-psn_account_id uuid
+psn_account_id uuid -> psn_accounts(id)
+game_id uuid nullable -> games(id)
 sync_type text
 status text
 started_at timestamptz
@@ -220,7 +231,7 @@ error_code text
 error_message text
 ```
 
-Expected sync types:
+Allowed sync types:
 
 ```text
 full
@@ -229,7 +240,7 @@ game
 refresh
 ```
 
-Expected statuses:
+Allowed statuses:
 
 ```text
 running
@@ -238,14 +249,45 @@ partial
 failed
 ```
 
-### `share_links`
+`game_id` is nullable because library/auth refresh runs are not necessarily tied to one game.
 
-Revocable public read-only access.
+### `progress_events`
+
+Append-oriented history for meaningful changes rather than full duplicate snapshots.
 
 ```text
 id uuid primary key
-psn_account_id uuid
-token_hash text
+psn_account_id uuid -> psn_accounts(id)
+game_id uuid -> games(id)
+trophy_id uuid nullable -> trophies(id)
+event_type text
+occurred_at timestamptz
+detected_at timestamptz
+sync_run_id uuid -> sync_runs(id)
+```
+
+Initial event types:
+
+```text
+game_discovered
+trophy_earned
+platinum_earned
+```
+
+`trophy_earned` and `platinum_earned` require a trophy reference; `game_discovered` does not.
+
+Partial unique indexes prevent a repeated sync from creating the same discovery/earned event again.
+
+`occurred_at` is when the upstream fact happened. `detected_at` is when TrophyBridge first observed it.
+
+### `share_links`
+
+Revocable read-only capability links.
+
+```text
+id uuid primary key
+psn_account_id uuid -> psn_accounts(id)
+token_hash text unique
 label text
 is_active boolean
 created_at timestamptz
@@ -253,11 +295,11 @@ last_used_at timestamptz
 revoked_at timestamptz
 ```
 
-The raw public token should not need to be stored once issued. The server can compare a cryptographic hash of the incoming token.
+M1 stores only the persistence shape. Token generation and hashing are implemented in M7.
 
 ### `sync_targets`
 
-Coordinates game-level synchronization and cooldowns.
+Per-account/game synchronization coordination.
 
 ```text
 psn_account_id uuid
@@ -265,45 +307,63 @@ game_id uuid
 last_sync_at timestamptz
 next_allowed_sync_at timestamptz
 lock_until timestamptz
+primary key (psn_account_id, game_id)
 ```
 
-This prevents concurrent public requests from launching duplicate upstream synchronization work.
+The pair is also a composite foreign key to `account_games`, so a synchronization lock cannot exist for a game the account does not know about.
 
-## Relationships
+## Index strategy
 
-```text
-auth.users
-   |
-   v
-psn_accounts
-   |\
-   | \---- sync_runs
-   | \---- share_links
-   | \---- progress_events
-   |
-   v
-account_games ------> games
-                       |
-                       v
-                 trophy_groups
-                       |
-                       v
-                    trophies
-                       |
-                       v
-                player_trophies
-```
+M1 adds explicit indexes for the first known access paths:
 
-## Data invariants
+- account games by account and recency;
+- games by lower-cased title for search;
+- trophy groups by game;
+- trophies by group and by game/type;
+- player trophies by account/earned state and by trophy;
+- sync runs by account/game and recency;
+- progress events by account/game and detection time;
+- active share links by account.
 
-- One trophy state row per player/trophy pair.
-- Earned state is monotonic unless an explicit future repair workflow proves local data invalid.
-- A failed sync cannot delete valid prior data.
-- Platinum progress counts only trophies in the base group.
-- A game may have at most one group classified as `base`.
-- Public tokens and authentication secrets are separate concerns.
-- Provider identifiers remain attributes, not internal primary keys.
+Indexes will be revisited against production query plans rather than guessed indefinitely.
 
-## Snapshot strategy
+## Row Level Security
 
-TrophyBridge does not plan to save a complete duplicate snapshot after every sync. The current state lives in normalized tables while `progress_events` records meaningful deltas. This keeps history useful without multiplying unchanged rows.
+Every application table in the exposed `public` schema has Row Level Security enabled in M1.
+
+M1 deliberately creates **no browser/client policies**. Before TrophyBridge authentication exists, direct client access is denied by default. Server-side/service-role access remains the intended database writer. Owner-scoped policies are added with the authentication layer in M3.
+
+## Core invariants
+
+The database enforces or structurally supports the following rules:
+
+1. Provider game identities are unique.
+2. A player has at most one current row per trophy.
+3. Repeated UPSERTs are idempotent.
+4. Earned trophy state is monotonic.
+5. Known earned timestamps cannot be replaced by less trustworthy later/missing values.
+6. A game has at most one base trophy group.
+7. Trophy IDs are unique within a title.
+8. A trophy cannot point to a group belonging to another game.
+9. DLC remains structurally separate from the base group used for platinum calculations.
+10. Progress events are deduplicated across repeated syncs.
+11. Percentages and counters remain inside valid ranges.
+12. RLS is enabled on every public application table.
+
+## Executable verification
+
+The schema is tested against a real PostgreSQL service in GitHub Actions.
+
+`tests/integration/domain_model.sql` verifies, among other things:
+
+- idempotent player-trophy UPSERT behavior;
+- monotonic `earned` state;
+- timestamp preservation;
+- one-base-group enforcement;
+- title-wide trophy-id uniqueness;
+- cross-game trophy-group protection;
+- progress-event deduplication;
+- base/DLC separation;
+- RLS enablement.
+
+The integration test uses an isolated disposable PostgreSQL database and never contacts PSN.
