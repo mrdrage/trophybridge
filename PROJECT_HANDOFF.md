@@ -11,7 +11,7 @@ Pilot game: Final Fantasy XVI on PS5.
 Preferred trophy locale: `it-IT`.
 Repository: `mrdrage/trophybridge`.
 Operating-cost requirement: **€0/month**.
-Local TrophyBridge development port for the owner: `3001` (another local project uses `3000`).
+Owner local development port: `3001`; another local project uses `3000`.
 
 ## MVP definition of done
 
@@ -31,126 +31,163 @@ Local TrophyBridge development port for the owner: `3001` (another local project
 
 TypeScript, Next.js App Router, Node 24, pnpm 11.20.0, PostgreSQL/Supabase, Supabase Auth + SSR, GitHub OAuth, `psn-api` 2.18.1 behind `PsnApiProvider`, Zod, AES-256-GCM, Vitest, SQL invariant tests, Playwright, GitHub Actions, Vercel Hobby planned.
 
-## Completed milestones
+## Milestone status
 
-### M0 Foundation
+- ✅ M0 Foundation
+- ✅ M1 Domain Model
+- ✅ M2 PSN Provider
+- ✅ M3 Authentication implementation/schema and live owner connection
+- ✅ M4 Library Sync implementation/schema and live 196-title smoke
+- ✅ M5 Trophy Sync implementation/schema; live FF16 deep-sync smoke is the immediate operational validation
+- M6 Progress Events
+- M7 Public Share
+- M8 AI Context
+- M9 Dashboard
+- M10 Hardening
 
-Application skeleton, quality gates, public health endpoint, CI, documentation, handoff discipline.
+## Authentication state
 
-### M1 Domain Model
+The real owner flow has been validated.
 
-PostgreSQL factual trophy model with integrity constraints, RLS, monotonic earned-state protection, event deduplication, and SQL invariant tests.
+- GitHub OAuth works locally.
+- PSN Online ID `mrdrage2` is connected.
+- Universal Search can omit this valid account, so the authentication client first tries exact Universal Search and then falls back to `getProfileFromUserName` when necessary.
+- The fallback never establishes identity by itself. TrophyBridge always finishes with `getProfileFromAccountId`, requiring `isMe=true` and the exact claimed Online ID.
+- NPSSO is never persisted.
+- PSN access tokens are never persisted.
+- The durable refresh token is encrypted with AES-256-GCM in server-only `psn_credentials`.
+- `PsnConnectionService.createProviderForOwner(ownerUserId)` is the only allowed synchronization boundary for obtaining an authenticated provider.
 
-### M2 PSN Provider
+## M4 live validation
 
-`PsnApiProvider` provides title/group/trophy/user-trophy reads with pagination, PS5 `trophy2` and legacy `trophy`, runtime validation, stable errors, locale headers, sanitized fixtures, and conservative numeric-progress semantics. `psn-api` is pinned exactly to 2.18.1.
+The M4 end-to-end smoke is complete.
 
-### M3 Authentication
-
-Supabase SSR + GitHub OAuth owner sessions; transient NPSSO bootstrap; exact PSN identity verification; AES-256-GCM encrypted refresh-token storage; refresh/reauth/disconnect lifecycle; owner-scoped non-secret RLS; server-only credential access; `PsnConnectionService.createProviderForOwner(ownerUserId)`.
-
-NPSSO and PSN access tokens are never persisted. `it-IT` is saved as the preferred trophy locale.
-
-### M4 Library Sync
-
-M4 is the first factual PSN synchronization layer.
-
-Implemented components:
+Real production result on 2026-08-19:
 
 ```text
-lib/library/types.ts
-lib/library/errors.ts
-lib/library/repository.ts
-lib/library/service.ts
-lib/library/runtime.ts
-lib/api/library-response.ts
-app/api/private/v1/library/sync/route.ts
-app/dashboard/library-panel.tsx
-supabase/migrations/20260819161000_m4_library_sync.sql
-tests/unit/library-sync-service.test.ts
-tests/integration/domain_library_sync.sql
+library sync status: success
+games processed: 196
+games stored: 196
+account_games stored: 196
+```
+
+The imported data includes `FINAL FANTASY XVI` on PS5 at 19% aggregate PSN library progress, with the latest provider update timestamp at the time of the smoke.
+
+A dashboard bug initially showed old PS3 titles because every first-import row had the same local `last_seen_at`. PR #7 corrected the overview to order first by `psn_last_updated_at` descending and only then by local `last_seen_at`.
+
+M4 persistence remains conservative: omitted titles are not deleted, aggregate counters/progress do not regress, and only one library run can be active per account.
+
+## M5 Trophy Sync
+
+M5 is implemented on the private, lazy single-game path.
+
+Key components:
+
+```text
+lib/trophies/types.ts
+lib/trophies/errors.ts
+lib/trophies/service.ts
+lib/trophies/repository.ts
+lib/trophies/runtime.ts
+lib/api/trophy-response.ts
+app/api/private/v1/games/[gameId]/sync/route.ts
+app/dashboard/games/[gameId]/page.tsx
+app/dashboard/games/[gameId]/trophy-sync-button.tsx
+supabase/migrations/20260819193000_m5_trophy_sync.sql
+tests/unit/trophy-sync-service.test.ts
+tests/integration/domain_trophy_sync.sql
 ```
 
 Flow:
 
 ```text
-TrophyBridge owner
-  -> LibrarySyncService
+Authenticated owner
+  -> select one existing account_game
+  -> POST /api/private/v1/games/{gameId}/sync
+  -> TrophySyncService
   -> PsnConnectionService.createProviderForOwner(ownerUserId)
-  -> PsnProvider.getGames()
-  -> bounded atomic PostgreSQL snapshot
-  -> games + account_games + sync_runs
-  -> private dashboard overview
+  -> PsnProvider.getTrophyGroups()
+  -> PsnProvider.getTrophies()
+  -> PsnProvider.getUserTrophies()
+  -> strict complete-snapshot validation
+  -> persist_game_trophy_snapshot(...)
+  -> trophy_groups + trophies + player_trophies
+  -> sync_runs + sync_targets
+  -> private game detail
 ```
 
-M4 imports only lightweight title state: provider identity, title, platforms, icon URL, aggregate progress/counts, hidden state, provider timestamp, and synchronization timestamps. Detailed trophy groups/metadata/player state remain M5.
+Validation before persistence requires:
 
-Persistence properties:
+- at most 100 groups and 1,000 trophies/user states;
+- unique group IDs;
+- unique title trophy IDs;
+- unique user trophy IDs;
+- exactly one base group and it must be PSN group `default`;
+- every title trophy belongs to a returned group;
+- actual bronze/silver/gold/platinum counts for every group exactly match the provider's `definedTrophies` totals;
+- title and user trophy arrays have the same complete identity set;
+- user trophy type agrees with title metadata.
 
-- game identity remains `(np_communication_id, np_service_name)`;
-- omitted titles are never deleted from last-good state;
-- aggregate progress and trophy counters do not regress;
-- PSN last-update time does not regress;
-- mutable title/platform/icon/hidden metadata can update;
-- only one running library sync is allowed per account;
-- stale running sync records can be recovered;
-- persistence is atomic through `persist_library_snapshot`;
-- the persistence function is server-role-only.
+If validation or PSN fails, the old factual state remains untouched. The database function is atomic and server-role-only. Earned state cannot regress; known localized metadata is preserved if a later provider response has a null field.
 
-## Zero-cost operating envelope
+Base and additional groups are structurally separate. The private detail exposes base trophy count/earned count and base platinum status separately from additional-group progress. M5 does not generate progress events; that belongs to M6.
 
-The user explicitly requires **€0/month** and does not want accidental overages.
-
-Verified on 2026-08-19:
-
-- connected Supabase organization is on the Free plan;
-- connected Supabase database is healthy and about 11 MB before the first real PSN import;
-- TrophyBridge GitHub repository is public and CI uses standard hosted runners;
-- Vercel deployment is planned for Hobby only and has not yet been activated.
-
-M4 application guardrails:
+## M5 zero-cost guardrails
 
 ```text
-LIBRARY_SYNC_MIN_INTERVAL_SECONDS=3600
-LIBRARY_SYNC_MAX_GAMES=2000
-LIBRARY_SYNC_STALE_AFTER_SECONDS=600
-recent dashboard rows=12, bounded to 50
-one running library sync/account
+GAME_SYNC_MIN_INTERVAL_SECONDS=300
+GAME_SYNC_MAX_GROUPS=100
+GAME_SYNC_MAX_TROPHIES=1000
+GAME_SYNC_STALE_AFTER_SECONDS=600
+one running game sync per account/game
+manual game sync only
 ```
 
-No library cron, background polling, automatic retry loop, image mirroring to Supabase Storage, or paid hosted dependency is used.
+No library-wide trophy hydration, cron, background polling, automatic retry loop, image mirroring, or new paid dependency was added.
 
-Quota-pressure policy: throttle/disable optional work, serve last-good state, or stop new synchronization before considering any paid tier. See `docs/COST_GUARDRAILS.md` and ADR 0011.
-
-## Real Supabase project state
+## Production Supabase state
 
 Project ref: `aecehligohfsjqbgoeeo`, region `eu-west-3`.
 
-Production migrations now include M1 domain model, M1 integrity refinements, M3 authentication, M3 hardening, and **M4 Library Sync**. Direct post-migration verification confirms the M4 `account_games` columns exist, the `authenticated` role cannot execute `persist_library_snapshot`, and `service_role` can execute it.
+Applied production migrations:
 
-Supabase security advisors report only informational RLS-without-policy notices on intentionally server-only/deny-by-default tables. Performance advisors report unused-index informational notices expected while the database contains no real imported game data. No new actionable M4 advisor finding remains.
+```text
+20260819123205 m1_domain_model
+20260819123353 m1_integrity_refinements
+20260819123405 m3_authentication
+20260819123600 m3_database_hardening
+20260819143049 m4_library_sync
+20260819192017 m5_trophy_sync
+```
 
-Never paste NPSSO, OAuth client secrets, Supabase secret/service-role keys, refresh/access tokens, or the TrophyBridge encryption key into ChatGPT, GitHub issues, commits, logs, screenshots, or documentation.
+Post-M5 verification:
 
-## Live owner validation still required
+```text
+persist_game_trophy_snapshot exists: yes
+one-running-game-sync index exists: yes
+authenticated can execute deep persistence: no
+service_role can execute deep persistence: yes
+games/account_games preserved after migration: 196 / 196
+trophy_groups/trophies/player_trophies before first M5 live smoke: 0 / 0 / 0
+```
 
-The owner has TrophyBridge running locally on `http://localhost:3001` with environment configuration prepared. The real GitHub OAuth + PSN owner connection/smoke has not yet been recorded as successful.
+Security advisor status after M5 contains the expected informational RLS-without-policy notices for intentionally server-only/deny-by-default tables. A separate Supabase Auth warning says leaked-password protection is disabled; TrophyBridge currently uses GitHub OAuth rather than password sign-in, so this is not an M5 regression and can be revisited during hardening. Performance notices are unused-index informational findings expected before real deep-trophy traffic.
 
-Before claiming that M4 imported real data, the owner must:
+Never paste NPSSO, OAuth client secrets, Supabase secret/service-role keys, refresh/access tokens, or the TrophyBridge encryption key into chat, GitHub, logs, screenshots, or documentation.
 
-1. sign in through GitHub OAuth;
-2. connect `mrdrage2` through the private dashboard using NPSSO only in that dashboard;
-3. verify PSN authorization refresh succeeds;
-4. press the M4 library sync button;
-5. confirm the real library appears and production rows are coherent.
+## Immediate next operational step
 
-Fixture-based CI is not a substitute for this operational smoke test.
+Update the owner's local `main`, open Final Fantasy XVI from the dashboard, and press `Sincronizza trofei` exactly once. Then verify production rows:
 
-## M4/M5 boundary
+- one `default` base group;
+- additional groups separately classified;
+- trophy metadata in `it-IT` when PSN supplies localization;
+- player earned states and earned timestamps;
+- base platinum progress excludes additional groups;
+- successful `game` sync run and per-game cooldown;
+- `progress_events` remains empty because event generation is M6.
 
-M5 must reuse the existing account/library rows and obtain PSN authorization through `PsnConnectionService`. It must lazily hydrate one selected game's trophy groups, title trophy metadata, and user trophy state.
-
-M5 must not turn library synchronization into full-library deep trophy hydration. Deep imports remain game-scoped to protect PSN and free-tier budgets.
+Fixture CI does not replace this live PSN smoke. After this validation, proceed to M6.
 
 ## Public API plan
 
@@ -166,27 +203,12 @@ Planned:
 /share/{token}/games/{gameId}/ai-context
 ```
 
-Public output is allowlist-based and excludes authentication material. Normal reads must use durable DB state, not trigger unbounded PSN refreshes.
-
-## Roadmap
-
-- ✅ M0 Foundation
-- ✅ M1 Domain Model
-- ✅ M2 PSN Provider
-- ✅ M3 Authentication implementation/schema
-- ✅ M4 Library Sync implementation/schema
-- ⏳ owner live OAuth/PSN + real library smoke
-- M5 Trophy Sync
-- M6 Progress Events
-- M7 Public Share
-- M8 AI Context
-- M9 Dashboard
-- M10 Hardening
+Normal public reads must use durable database state. Any future refresh path must reuse the bounded per-game synchronization boundary rather than permit unbounded PSN calls.
 
 ## Documentation map
 
 - `README.md`: overview/status
-- `docs/ARCHITECTURE.md`: boundaries
+- `docs/ARCHITECTURE.md`: system boundaries
 - `docs/API.md`: API contract
 - `docs/DATA_MODEL.md`: factual persistence model
 - `docs/SECURITY.md`: security model
