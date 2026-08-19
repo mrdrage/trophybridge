@@ -39,7 +39,7 @@ TypeScript, Next.js App Router, Node 24, pnpm 11.20.0, PostgreSQL/Supabase, Supa
 - ✅ M3 Authentication implementation/schema and live owner connection
 - ✅ M4 Library Sync implementation/schema and live 196-title smoke
 - ✅ M5 Trophy Sync implementation/schema and live Final Fantasy XVI baseline smoke
-- ✅ M6 Progress Events implementation; production rollout and first real post-baseline trophy delta are the remaining operational checks
+- ✅ M6 Progress Events implementation + production schema; first real post-baseline trophy delta remains the operational smoke
 - M7 Public Share
 - M8 AI Context
 - M9 Dashboard
@@ -165,11 +165,11 @@ recent private progress events <=20
 
 No queue, cron, polling worker, external event service, image mirroring, or new paid dependency was added. Detection piggybacks on the existing game sync.
 
-## Production Supabase state before M6 rollout
+## Production Supabase state after M6 rollout
 
 Project ref: `aecehligohfsjqbgoeeo`, region `eu-west-3`.
 
-Applied production migrations before M6:
+Applied production migrations now include:
 
 ```text
 20260819123205 m1_domain_model
@@ -178,24 +178,23 @@ Applied production migrations before M6:
 20260819123600 m3_database_hardening
 20260819143049 m4_library_sync
 20260819192017 m5_trophy_sync
+20260819210429 m6_progress_events
 ```
 
-M6 migration to apply after final CI:
+Direct verification after applying M6:
 
 ```text
-m6_progress_events
+persist_game_trophy_snapshot_with_events exists: yes
+authenticated can execute it: no
+service_role can execute it: yes
+games/account_games: 196 / 196
+FF16 groups/trophies/player rows/earned: 3 / 69 / 69 / 17
+progress_events immediately after migration: 0
 ```
 
-Post-rollout verification must confirm:
+The migration itself creates no historical events and did not mutate the M5 baseline.
 
-```text
-M6 RPC exists
-authenticated cannot execute it
-service_role can execute it
-196 games/account_games remain intact
-FF16 remains 3 groups / 69 trophies / 69 player rows / 17 earned before a new trophy
-progress_events remains 0 immediately after migration
-```
+Supabase security advisors remain limited to the expected informational RLS-without-policy notices on intentionally server-only/deny-by-default tables plus the pre-existing Auth leaked-password-protection warning. TrophyBridge uses GitHub OAuth rather than password sign-in. Performance advisors contain unused-index informational notices; `progress_events` is still empty before the first real M6 delta, so those notices are expected.
 
 ## Immediate operational validation after M6 rollout
 
