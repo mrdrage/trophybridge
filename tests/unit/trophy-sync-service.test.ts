@@ -125,8 +125,11 @@ const userTrophies: PsnUserTrophy[] = [
 class MemoryRepository implements TrophyRepository {
   latest: GameSyncRun | null = null;
   persisted: GameTrophySnapshot | null = null;
+  persistedRunId: string | null = null;
   runStatus: "running" | "success" | "failed" | null = null;
+  finishedNewTrophiesFound: number | null = null;
   target: GameSyncTarget | null = target;
+  nextNewTrophiesFound = 0;
 
   async getGameForAccount() {
     return this.target;
@@ -143,16 +146,22 @@ class MemoryRepository implements TrophyRepository {
     return "run-1";
   }
 
-  async finishGameRun(input: { status: "success" | "failed" }) {
+  async finishGameRun(input: {
+    status: "success" | "failed";
+    newTrophiesFound?: number;
+  }) {
     this.runStatus = input.status;
+    this.finishedNewTrophiesFound = input.newTrophiesFound ?? 0;
   }
 
   async persistGameSnapshot(
     _psnAccountId: string,
     _gameId: string,
+    runId: string,
     snapshot: GameTrophySnapshot,
   ): Promise<PersistGameSnapshotResult> {
     this.persisted = snapshot;
+    this.persistedRunId = runId;
     const groupKind = new Map(snapshot.groups.map((group) => [group.groupId, group.kind]));
     const userById = new Map(snapshot.userTrophies.map((trophy) => [trophy.trophyId, trophy]));
     const base = snapshot.trophies.filter((trophy) => groupKind.get(trophy.groupId) === "base");
@@ -168,6 +177,7 @@ class MemoryRepository implements TrophyRepository {
       additionalEarnedCount: additional.filter(
         (trophy) => userById.get(trophy.trophyId)?.earned,
       ).length,
+      newTrophiesFound: this.nextNewTrophiesFound,
     };
   }
 
@@ -220,9 +230,21 @@ describe("TrophySyncService", () => {
       baseEarnedCount: 1,
       additionalTrophyCount: 1,
       additionalEarnedCount: 1,
+      newTrophiesFound: 0,
     });
     expect(repository.persisted?.groups).toHaveLength(2);
+    expect(repository.persistedRunId).toBe("run-1");
     expect(repository.runStatus).toBe("success");
+  });
+
+  it("propagates newly detected trophy count to the sync summary and audit run", async () => {
+    const repository = new MemoryRepository();
+    repository.nextNewTrophiesFound = 2;
+
+    const summary = await service(repository).sync("owner-1", "game-1");
+
+    expect(summary.newTrophiesFound).toBe(2);
+    expect(repository.finishedNewTrophiesFound).toBe(2);
   });
 
   it("rejects a partial title snapshot before any persistence", async () => {
@@ -234,6 +256,7 @@ describe("TrophySyncService", () => {
     } satisfies Partial<TrophySyncError>);
     expect(repository.persisted).toBeNull();
     expect(repository.runStatus).toBe("failed");
+    expect(repository.finishedNewTrophiesFound).toBe(0);
   });
 
   it("enforces the per-game cooldown before contacting PSN", async () => {
@@ -287,5 +310,6 @@ describe("TrophySyncService", () => {
     );
     expect(repository.persisted).toBeNull();
     expect(repository.runStatus).toBe("failed");
+    expect(repository.finishedNewTrophiesFound).toBe(0);
   });
 });

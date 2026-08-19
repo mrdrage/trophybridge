@@ -64,7 +64,7 @@ Representative errors include `SYNC_COOLDOWN`, `SYNC_IN_PROGRESS`, `LIBRARY_TOO_
 POST /api/private/v1/games/{gameId}/sync
 ```
 
-M5 hydrates exactly one game already present in the authenticated owner's synchronized library.
+M5/M6 hydrate exactly one game already present in the authenticated owner's synchronized library and detect newly earned trophies against the existing durable baseline.
 
 The route:
 
@@ -73,8 +73,8 @@ The route:
 3. obtains the provider only through `PsnConnectionService.createProviderForOwner(ownerUserId)`;
 4. reads trophy groups, title trophy metadata, and user trophy state;
 5. rejects incomplete or inconsistent snapshots before any write;
-6. atomically persists the validated snapshot;
-7. returns a compact safe summary.
+6. atomically persists the validated snapshot and any M6 progress events;
+7. returns a compact safe summary including the number of newly detected trophies.
 
 Representative success:
 
@@ -82,21 +82,22 @@ Representative success:
 {
   "summary": {
     "gameId": "uuid",
-    "processedCount": 68,
-    "earnedCount": 20,
+    "processedCount": 69,
+    "earnedCount": 18,
     "baseTrophyCount": 50,
-    "baseEarnedCount": 16,
-    "additionalTrophyCount": 18,
-    "additionalEarnedCount": 4,
+    "baseEarnedCount": 17,
+    "additionalTrophyCount": 19,
+    "additionalEarnedCount": 1,
+    "newTrophiesFound": 1,
     "syncedAt": "2026-08-19T20:30:00.000Z",
     "nextAllowedAt": "2026-08-19T20:35:00.000Z"
   }
 }
 ```
 
-The numeric values above are illustrative API shape only, not live Final Fantasy XVI state.
+The numeric values above are illustrative API shape only. `newTrophiesFound` counts newly earned trophies, not raw event rows, so a newly earned platinum still contributes `1` even though M6 also writes a dedicated `platinum_earned` event.
 
-M5 error codes include:
+Error codes include:
 
 ```text
 GAME_NOT_FOUND
@@ -131,9 +132,28 @@ A deep trophy write is allowed only for a complete, bounded snapshot. TrophyBrid
 
 A rejected/failed sync leaves the previous persisted trophy state intact.
 
-Additional groups are persisted separately from the base group. Base platinum calculations must use only trophies attached to the `default` base group.
+Additional groups are persisted separately from the base group. Base platinum calculations use only trophies attached to the `default` base group.
 
-M5 does not create progress-event rows. Delta/event detection is M6.
+## M6 progress-event semantics
+
+The first successful deep snapshot of a game is a baseline. Earned trophies already present in that first snapshot are factual state, not newly observed activity, and produce no progress events.
+
+Later complete snapshots create events only for durable transitions:
+
+```text
+previous earned=false + incoming earned=true
+```
+
+Event mapping:
+
+```text
+normal newly earned trophy -> trophy_earned
+newly earned platinum      -> trophy_earned + platinum_earned
+```
+
+`occurred_at` uses PSN's earned timestamp when available. `detected_at` is the synchronization timestamp. Each event is linked to the game sync run that detected it and database uniqueness constraints make replays idempotent.
+
+The current private game page reads at most 20 recent trophy/platinum events from PostgreSQL. Opening the page does not trigger PSN traffic.
 
 ## Planned public share API
 
@@ -180,6 +200,8 @@ recent_activity
 sync
 ```
 
+M6 `progress_events` are the intended durable source for `recent_activity` in M8.
+
 The public API will be read-only, capability-token gated, revocable, and non-indexed. Authentication material can never appear in public output.
 
 ## Numeric progress honesty
@@ -190,9 +212,9 @@ When PSN does not expose a current numeric trophy-progress value, TrophyBridge r
 
 Normal dashboard and future public reads use durable PostgreSQL state. Opening a page must not automatically contact PSN.
 
-Current M5 deep refresh is an authenticated explicit action with a 300-second default per-game cooldown, one-running-sync protection, a 100-group ceiling, and a 1,000-trophy ceiling. Future public freshness must reuse similarly bounded server-side coordination.
+Current game refresh is an authenticated explicit action with a 300-second default per-game cooldown, one-running-sync protection, a 100-group ceiling, and a 1,000-trophy ceiling. M6 event detection piggybacks on that transaction and adds no queue, cron, or polling service.
 
-If an upstream refresh fails, the most recent valid factual state remains readable.
+If an upstream refresh fails, the most recent valid factual state remains readable and no new event is created.
 
 ## Hidden trophy privacy
 

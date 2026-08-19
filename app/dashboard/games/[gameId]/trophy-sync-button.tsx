@@ -33,8 +33,15 @@ export function TrophySyncButton({ gameId }: { gameId: string }) {
       }
 
       if (data.summary) {
+        const discovered = data.summary.newTrophiesFound;
+        const delta =
+          discovered === 0
+            ? " Nessun nuovo trofeo rilevato."
+            : discovered === 1
+              ? " Rilevato 1 nuovo trofeo."
+              : ` Rilevati ${discovered} nuovi trofei.`;
         setMessage(
-          `Trofei aggiornati: ${data.summary.earnedCount}/${data.summary.processedCount} ottenuti.`,
+          `Trofei aggiornati: ${data.summary.earnedCount}/${data.summary.processedCount} ottenuti.${delta}`,
         );
       }
       router.refresh();

@@ -150,6 +150,7 @@ export class TrophySyncService {
       const result = await this.repository.persistGameSnapshot(
         account.id,
         gameId,
+        runId,
         snapshot,
         finishedAt,
         nextAllowedAt,
@@ -160,6 +161,7 @@ export class TrophySyncService {
         status: "success",
         finishedAt,
         trophiesProcessed: result.processedCount,
+        newTrophiesFound: result.newTrophiesFound,
       });
 
       return {
@@ -176,6 +178,7 @@ export class TrophySyncService {
           status: "failed",
           finishedAt: this.now().toISOString(),
           trophiesProcessed: 0,
+          newTrophiesFound: 0,
           errorCode: failure.code,
           errorMessage: failure.message,
         });
