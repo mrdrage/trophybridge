@@ -87,14 +87,14 @@ begin
       title_name = excluded.title_name,
       platforms = excluded.platforms,
       icon_url = excluded.icon_url
-    returning id
+    returning id, np_communication_id, np_service_name
   ),
   resolved as (
-    select g.id as game_id, i.*
+    select ug.id as game_id, i.*
     from input i
-    join public.games g
-      on g.np_communication_id = i.np_communication_id
-     and g.np_service_name = i.np_service_name
+    join upsert_games ug
+      on ug.np_communication_id = i.np_communication_id
+     and ug.np_service_name = i.np_service_name
   ),
   discovered as (
     select count(*)::integer as count

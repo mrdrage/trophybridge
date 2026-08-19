@@ -219,7 +219,7 @@ export class SupabaseLibraryRepository implements LibraryRepository {
 
     return {
       totalCount: typeof count === "number" ? count : rows.length,
-      games: rows.map((row) => mapOverviewRow(row as Record<string, unknown>)),
+      games: rows.map((row) => mapOverviewRow(row as unknown as Record<string, unknown>)),
     };
   }
 }
