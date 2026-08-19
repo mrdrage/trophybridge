@@ -33,6 +33,35 @@ function uniqueBy<T>(items: T[], key: (item: T) => string | number): boolean {
   return new Set(items.map(key)).size === items.length;
 }
 
+function validateGroupCounts(groups: PsnTrophyGroup[], trophies: PsnTrophy[]): void {
+  const actual = new Map<
+    string,
+    { bronze: number; silver: number; gold: number; platinum: number }
+  >();
+
+  for (const group of groups) {
+    actual.set(group.groupId, { bronze: 0, silver: 0, gold: 0, platinum: 0 });
+  }
+  for (const trophy of trophies) {
+    const counts = actual.get(trophy.groupId);
+    if (!counts) throw new TrophySyncError("INVALID_TROPHY_SNAPSHOT");
+    counts[trophy.type] += 1;
+  }
+
+  for (const group of groups) {
+    const counts = actual.get(group.groupId);
+    if (
+      !counts ||
+      counts.bronze !== group.definedTrophies.bronze ||
+      counts.silver !== group.definedTrophies.silver ||
+      counts.gold !== group.definedTrophies.gold ||
+      counts.platinum !== group.definedTrophies.platinum
+    ) {
+      throw new TrophySyncError("INVALID_TROPHY_SNAPSHOT");
+    }
+  }
+}
+
 function validateSnapshot(
   groups: PsnTrophyGroup[],
   trophies: PsnTrophy[],
@@ -66,6 +95,7 @@ function validateSnapshot(
   if (trophies.some((trophy) => !groupIds.has(trophy.groupId))) {
     throw new TrophySyncError("INVALID_TROPHY_SNAPSHOT");
   }
+  validateGroupCounts(groups, trophies);
 
   if (trophies.length !== userTrophies.length) {
     throw new TrophySyncError("INVALID_TROPHY_SNAPSHOT");
