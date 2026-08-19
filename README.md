@@ -54,7 +54,7 @@ Dashboard  Public API
 
 ## Local development
 
-Requirements: Node.js 20+ and pnpm 11.20.0.
+Requirements: Node.js 22.13+ (Node 24 recommended and pinned by `.node-version`) and pnpm 11.20.0.
 
 ```bash
 pnpm install
