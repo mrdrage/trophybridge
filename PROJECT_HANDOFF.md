@@ -35,8 +35,8 @@ The MVP is complete when the following real flow works end to end:
 
 - TypeScript
 - Next.js App Router
-- Node.js 20+
-- pnpm
+- Node.js 22.13+; Node 24 is the pinned CI/development target
+- pnpm 11.20.0
 - PostgreSQL through Supabase
 - Supabase Auth, initially GitHub OAuth
 - Zod for runtime validation
@@ -150,6 +150,8 @@ Hidden unearned trophy descriptions should be spoiler-safe by default in the fut
 ## Current implementation state
 
 M0 contains a Next.js/TypeScript application shell, a public health route, `PsnProvider` domain types, `MockPsnProvider`, Vitest unit coverage, Playwright smoke coverage, ESLint/typecheck/build scripts, GitHub Actions CI, `.env.example`, architecture/API/data-model/security/PSN documentation, and ADRs.
+
+CI is configured to run lint, TypeScript checks, Vitest, a production build, and a Chromium Playwright smoke test. An initial validation run exposed the Node/pnpm compatibility boundary, so M0 now pins Node 24 while allowing Node 22.13+ in the package engine contract.
 
 No real PSN credentials are connected yet. No Supabase production project or database migration is part of M0. No real `psn-api` network calls belong in CI.
 
