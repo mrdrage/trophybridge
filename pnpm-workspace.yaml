@@ -1,0 +1,8 @@
+packages:
+  - "."
+
+# pnpm 11 blocks dependency lifecycle scripts unless explicitly reviewed.
+# unrs-resolver is pulled by the Next.js ESLint toolchain and is the only
+# dependency build currently approved by TrophyBridge.
+allowBuilds:
+  unrs-resolver: true
