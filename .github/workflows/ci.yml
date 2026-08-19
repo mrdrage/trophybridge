@@ -30,7 +30,7 @@ jobs:
           corepack prepare pnpm@11.20.0 --activate
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm lint
@@ -100,7 +100,7 @@ jobs:
           corepack prepare pnpm@11.20.0 --activate
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium

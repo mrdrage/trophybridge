@@ -1,0 +1,27 @@
+{
+  "trophySetVersion": "01.00",
+  "hasTrophyGroups": true,
+  "lastUpdatedDateTime": "2026-08-18T21:45:00Z",
+  "trophies": [
+    {
+      "trophyId": 1,
+      "trophyHidden": false,
+      "trophyType": "bronze",
+      "earned": true,
+      "earnedDateTime": "2026-08-18T21:00:00Z",
+      "trophyRare": 3,
+      "trophyEarnedRate": "63.4"
+    },
+    {
+      "trophyId": 2,
+      "trophyHidden": true,
+      "trophyType": "silver",
+      "earned": false,
+      "trophyRare": 1,
+      "trophyEarnedRate": "8.2",
+      "trophyProgressTargetValue": "20"
+    }
+  ],
+  "totalItemCount": 3,
+  "nextOffset": 2
+}

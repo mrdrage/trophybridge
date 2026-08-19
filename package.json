@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "next": "16.3.0",
+    "psn-api": "2.18.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "4.4.3"

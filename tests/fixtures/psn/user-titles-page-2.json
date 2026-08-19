@@ -1,0 +1,20 @@
+{
+  "trophyTitles": [
+    {
+      "npServiceName": "trophy",
+      "npCommunicationId": "NPWR90002_00",
+      "trophySetVersion": "01.00",
+      "trophyTitleName": "Fixture Legacy",
+      "trophyTitleIconUrl": "https://example.invalid/legacy.png",
+      "trophyTitlePlatform": "PS4,PSVITA",
+      "hasTrophyGroups": false,
+      "definedTrophies": { "bronze": 10, "silver": 3, "gold": 1, "platinum": 1 },
+      "progress": 100,
+      "earnedTrophies": { "bronze": 10, "silver": 3, "gold": 1, "platinum": 1 },
+      "hiddenFlag": false,
+      "lastUpdatedDateTime": "2025-01-01T12:00:00Z"
+    }
+  ],
+  "totalItemCount": 2,
+  "previousOffset": 0
+}

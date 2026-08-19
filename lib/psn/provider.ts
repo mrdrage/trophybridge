@@ -1,4 +1,12 @@
 export type PsnPlatform = "PS5" | "PS4" | "PS3" | "PSVITA" | "UNKNOWN";
+export type PsnServiceName = "trophy" | "trophy2";
+
+export interface PsnTrophyCounts {
+  bronze: number;
+  silver: number;
+  gold: number;
+  platinum: number;
+}
 
 export interface PsnAccount {
   accountId: string;
@@ -7,7 +15,7 @@ export interface PsnAccount {
 
 export interface PsnGameRef {
   communicationId: string;
-  serviceName: "trophy" | "trophy2" | string;
+  serviceName: PsnServiceName;
 }
 
 export interface PsnGame extends PsnGameRef {
@@ -15,15 +23,24 @@ export interface PsnGame extends PsnGameRef {
   platforms: PsnPlatform[];
   progressPercent: number | null;
   iconUrl: string | null;
+  definedTrophies: PsnTrophyCounts;
+  earnedTrophies: PsnTrophyCounts;
+  lastUpdatedAt: string | null;
+  hidden: boolean;
 }
+
+export type PsnTrophyGroupKind = "base" | "dlc" | "unknown";
 
 export interface PsnTrophyGroup {
   groupId: string;
+  kind: PsnTrophyGroupKind;
   name: string | null;
   iconUrl: string | null;
+  definedTrophies: PsnTrophyCounts;
 }
 
 export type PsnTrophyType = "bronze" | "silver" | "gold" | "platinum";
+export type PsnTrophyRarity = "ultra_rare" | "very_rare" | "rare" | "common" | "unknown";
 
 export interface PsnTrophy {
   trophyId: number;
@@ -37,8 +54,14 @@ export interface PsnTrophy {
 
 export interface PsnUserTrophy {
   trophyId: number;
+  type: PsnTrophyType;
+  hidden: boolean;
   earned: boolean;
   earnedAt: string | null;
+  rarity: PsnTrophyRarity;
+  earnedRate: number | null;
+  progressValue: number | null;
+  progressTarget: number | null;
   progressPercent: number | null;
 }
 

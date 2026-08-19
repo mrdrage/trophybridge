@@ -1,0 +1,17 @@
+{
+  "trophySetVersion": "01.00",
+  "hasTrophyGroups": true,
+  "trophies": [
+    {
+      "trophyId": 3,
+      "trophyHidden": false,
+      "trophyType": "bronze",
+      "trophyName": "Expansion Step",
+      "trophyDetail": "Complete the expansion fixture objective.",
+      "trophyIconUrl": "https://example.invalid/trophy-3.png",
+      "trophyGroupId": "001"
+    }
+  ],
+  "totalItemCount": 3,
+  "previousOffset": 0
+}

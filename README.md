@@ -4,7 +4,7 @@ A privacy-first bridge between PlayStation trophy data and AI-assisted platinum 
 
 TrophyBridge is being built to synchronize PlayStation trophy progress, normalize base-game and DLC data, and expose a stable read-only API that an AI assistant can use to guide a player toward a platinum trophy.
 
-> Status: **M1 · Domain Model complete**. `v0.1.0` remains in development; the next milestone is **M2 · PSN Provider**.
+> Status: **M2 · PSN Provider complete**. `v0.1.0` remains in development; the next milestone is **M3 · Authentication**.
 
 ## MVP goal
 
@@ -14,6 +14,9 @@ The first release is complete when a user can connect a PSN account, sync a game
 
 ```text
 PlayStation Network
+        |
+        v
+   PsnApiProvider
         |
         v
     PsnProvider
@@ -34,8 +37,10 @@ Dashboard  Public API
 
 - Privacy first: secrets never enter the public API or repository.
 - Provider isolation: the application depends on `PsnProvider`, not directly on a single PSN library.
+- External payloads are runtime-validated before entering the TrophyBridge domain.
 - Base game and DLC are structurally separated for platinum calculations.
 - Trophy state is monotonic: once a trophy is known to be earned, an incomplete sync cannot silently un-earn it.
+- Unsupported provider data stays unknown/null rather than being invented.
 - Public sharing is read-only, revocable, non-indexed, and token based.
 - The API is versioned and includes an AI-oriented context endpoint.
 - PostgreSQL protects critical domain invariants instead of trusting every future application writer to reproduce them perfectly.
@@ -47,6 +52,7 @@ Dashboard  Public API
 - pnpm
 - PostgreSQL via Supabase
 - Supabase Auth
+- `psn-api` 2.18.1 behind `PsnApiProvider`
 - Zod
 - Vitest
 - Playwright
@@ -86,7 +92,7 @@ The public foundation health endpoint is available at `/api/public/v1/health`.
 
 - ✅ **M0 Foundation**: project skeleton, CI, tests, documentation.
 - ✅ **M1 Domain Model**: PostgreSQL schema, migrations, constraints, RLS, and database invariant tests.
-- **M2 PSN Provider**: provider mapping and real `psn-api` adapter behind `PsnProvider`.
+- ✅ **M2 PSN Provider**: provider mapping, pagination, validation, fixtures, error normalization, and real `psn-api` adapter behind `PsnProvider`.
 - **M3 Authentication**: PSN connection and encrypted credential storage.
 - **M4 Library Sync**: import PlayStation games.
 - **M5 Trophy Sync**: game groups, trophies, earned state and DLC separation.
@@ -114,6 +120,14 @@ The executable schema lives under [`supabase/migrations/`](./supabase/migrations
 Important guarantees include idempotent player-trophy UPSERTs, monotonic earned state, preservation of trusted earned timestamps, one base trophy group per game, title-wide trophy IDs, deduplicated progress events, and deny-by-default RLS on the exposed application tables.
 
 See [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md) for the definitive model.
+
+## M2 PSN provider
+
+`PsnApiProvider` translates PlayStation trophy responses into TrophyBridge-owned types. It handles title/trophy pagination, propagates `trophy2` for PS5 and `trophy` for legacy platforms, sends a configurable `Accept-Language`, and normalizes provider failures into stable application error codes.
+
+Sanitized fixtures under `tests/fixtures/psn/` exercise the adapter without contacting PSN in CI. Current numeric trophy progress is not exposed by the pinned `psn-api` user-trophy contract, so TrophyBridge stores the target when available but never fabricates a current value.
+
+See [`docs/PSN_INTEGRATION.md`](./docs/PSN_INTEGRATION.md) for the exact provider contract and limitations.
 
 ## Documentation
 
