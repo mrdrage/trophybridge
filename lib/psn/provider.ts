@@ -50,14 +50,16 @@ export interface PsnTrophy {
   type: PsnTrophyType;
   hidden: boolean;
   iconUrl: string | null;
-  rarity: PsnTrophyRarity;
-  earnedRate: number | null;
 }
 
 export interface PsnUserTrophy {
   trophyId: number;
+  type: PsnTrophyType;
+  hidden: boolean;
   earned: boolean;
   earnedAt: string | null;
+  rarity: PsnTrophyRarity;
+  earnedRate: number | null;
   progressValue: number | null;
   progressTarget: number | null;
   progressPercent: number | null;
