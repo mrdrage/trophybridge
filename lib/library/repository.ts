@@ -211,6 +211,7 @@ export class SupabaseLibraryRepository implements LibraryRepository {
       .from("account_games")
       .select(overviewSelect, { count: "exact" })
       .eq("psn_account_id", psnAccountId)
+      .order("psn_last_updated_at", { ascending: false, nullsFirst: false })
       .order("last_seen_at", { ascending: false })
       .limit(boundedLimit);
 
