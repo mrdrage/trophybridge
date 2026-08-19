@@ -72,7 +72,7 @@ Stable identity:
 (game_id, psn_trophy_id)
 ```
 
-Stores group link, localized name/description when available, bronze/silver/gold/platinum type, hidden flag, icon URL, rarity classification, and earned-rate metadata.
+Stores group link, localized name/description when available, bronze/silver/gold/platinum type, hidden flag, icon URL, rarity classification, and earned-rate metadata supplied by PlayStation Network.
 
 M5 upserts preserve already-known localized fields when a later provider payload supplies null rather than deleting factual metadata.
 
@@ -98,6 +98,8 @@ game
 ```
 
 M4 enforces one running library sync per account. M5 adds one running game sync per `(psn_account_id, game_id)` target.
+
+M6 uses the existing `new_trophies_found` column as the number of newly earned trophies detected during a successful game sync. This is a trophy count, not a raw `progress_events` row count, because a platinum transition may create two event rows while still representing one newly earned trophy.
 
 Successful/failed runs record bounded summary/error metadata rather than raw provider exceptions.
 
@@ -151,28 +153,76 @@ psn_accounts.last_successful_sync_at
 
 No deep snapshot deletes existing trophy rows. Failed/incomplete PSN responses therefore leave last-good state intact.
 
-The function returns separate counts for:
+## M6 event-aware game persistence
+
+`persist_game_trophy_snapshot_with_events(...)` is an additive server-only wrapper around the M5 persistence function.
+
+Additional argument:
 
 ```text
-processed trophies
-earned trophies
-base trophies / base earned
-additional trophies / additional earned
+p_sync_run_id
 ```
 
-This separation is the factual foundation for platinum progress that excludes additional groups.
+The wrapper first requires that this ID is the currently `running` `game` sync for the same PSN account and game. Before delegating to M5 persistence, it captures incoming trophies that satisfy both conditions:
+
+```text
+existing durable player_trophies.earned = false
+incoming validated PSN state.earned = true
+```
+
+Because no `player_trophies` row exists before a game's first deep sync, that initial import automatically becomes the baseline and produces no historical trophy events.
+
+After the M5 snapshot succeeds inside the same PostgreSQL transaction, M6 inserts:
+
+```text
+trophy_earned
+platinum_earned   # only in addition to trophy_earned for a newly earned platinum
+```
+
+The wrapper returns all M5 summary counts plus:
+
+```text
+new_trophies_found
+```
+
+A failure anywhere in the wrapper rolls back both the delegated factual snapshot and event creation.
 
 ## Progress-event model
 
 ### `progress_events`
 
-The schema exists from M1 but M5 deliberately does not populate it. M6 will compare persisted player state and create deduplicated events for newly earned trophies.
+Durable observed activity tied to the sync run that detected it.
+
+Important fields:
+
+```text
+psn_account_id
+game_id
+trophy_id
+event_type
+occurred_at
+detected_at
+sync_run_id
+```
+
+M6 currently emits:
+
+```text
+trophy_earned
+platinum_earned
+```
+
+`occurred_at` uses PSN's earned timestamp when available and otherwise falls back to the sync timestamp. `detected_at` is the sync timestamp.
+
+Uniqueness rules inherited from M1 ensure one `trophy_earned` and one `platinum_earned` event at most for a given account/trophy. Replaying an identical earned snapshot therefore creates no duplicate history.
+
+The schema still permits `game_discovered`; M6 does not backfill 196 historical library discoveries because fabricated historical chronology is deliberately avoided.
 
 ## Sharing model
 
 ### `share_links`
 
-Schema-ready capability links for future public read-only access. M7 will activate issuance/revocation and public routes.
+Schema-ready capability links for future public read-only access. M7 activates issuance/revocation and public routes.
 
 ## RLS and privilege boundary
 
@@ -180,18 +230,21 @@ Domain tables have RLS enabled. Most factual tables remain deny-by-default to br
 
 Privileged persistence functions are revoked from `public`, `anon`, and `authenticated` and granted only to `service_role`.
 
-Production post-M5 verification confirms `authenticated` cannot execute `persist_game_trophy_snapshot` while `service_role` can.
+M6 integration tests verify the event-aware wrapper is not executable by `authenticated` and is executable by `service_role`.
 
 ## Production checkpoint, 2026-08-19
 
-Before the first live M5 deep-trophy smoke:
+After the live M5 Final Fantasy XVI baseline smoke and before M6 event detection is exercised on a newly earned trophy:
 
 ```text
 games: 196
 account_games: 196
-trophy_groups: 0
-trophies: 0
-player_trophies: 0
+FINAL FANTASY XVI trophy_groups: 3
+FINAL FANTASY XVI trophies: 69
+FINAL FANTASY XVI player_trophies: 69
+FINAL FANTASY XVI earned player_trophies: 17
+progress_events: 0
+successful game sync runs: 1
 ```
 
-This is intentional: M4 imported only lightweight library state, and M5 remains lazy per selected game.
+The empty event table at this checkpoint is intentional. M6 starts observing new activity from the existing M5 durable baseline rather than inventing history for the 17 trophies that were already earned.
