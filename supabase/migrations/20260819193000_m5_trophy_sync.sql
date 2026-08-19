@@ -280,13 +280,13 @@ begin
     select
       count(*)::integer as processed,
       count(*) filter (where pu.earned)::integer as earned,
-      count(*) filter (where tg.kind = 'base')::integer as base_total,
-      count(*) filter (where tg.kind = 'base' and pu.earned)::integer as base_earned,
-      count(*) filter (where tg.kind <> 'base')::integer as additional_total,
-      count(*) filter (where tg.kind <> 'base' and pu.earned)::integer as additional_earned
+      count(*) filter (where ug.kind = 'base')::integer as base_total,
+      count(*) filter (where ug.kind = 'base' and pu.earned)::integer as base_earned,
+      count(*) filter (where ug.kind <> 'base')::integer as additional_total,
+      count(*) filter (where ug.kind <> 'base' and pu.earned)::integer as additional_earned
     from player_upsert pu
-    join public.trophies t on t.id = pu.trophy_id
-    join public.trophy_groups tg on tg.id = t.trophy_group_id
+    join upsert_trophies ut on ut.id = pu.trophy_id
+    join upsert_groups ug on ug.id = ut.trophy_group_id
   ),
   sync_target_touch as (
     insert into public.sync_targets (
