@@ -5,6 +5,7 @@ import {
   classifyTrophyGroup,
   mapGame,
   mapPlatforms,
+  mapTrophy,
   mapTrophyRarity,
   mapUserTrophy,
 } from "../../lib/psn/mapper";
@@ -79,5 +80,14 @@ describe("PSN mapper", () => {
     expect(() => mapGame({ trophyTitleName: "Incomplete" })).toThrowError(
       PsnProviderError,
     );
+
+    expect(() =>
+      mapTrophy({
+        trophyId: 4,
+        trophyHidden: false,
+        trophyType: "bronze",
+        trophyName: "No group",
+      }),
+    ).toThrowError(PsnProviderError);
   });
 });
