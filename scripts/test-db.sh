@@ -12,6 +12,9 @@ for migration in supabase/migrations/*.sql; do
   "${PSQL[@]}" -f "$migration"
 done
 
-"${PSQL[@]}" -f tests/integration/domain_model.sql
+for test_file in tests/integration/domain_*.sql; do
+  echo "Running ${test_file}"
+  "${PSQL[@]}" -f "$test_file"
+done
 
 echo "Database integration checks passed."
