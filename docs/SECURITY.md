@@ -83,6 +83,8 @@ Requirements:
 - public endpoints never permit mutation;
 - responses are not indexed by search engines.
 
+M1 creates only the persistence shape for `share_links`. Token generation, hashing, rotation and public route behavior remain M7 work.
+
 ## Public-data allowlist
 
 Public APIs are allowlist based. The following categories may be exposed when enabled by share settings:
@@ -126,7 +128,26 @@ Default unearned hidden representation:
 
 Application tables exposed through Supabase must use Row Level Security. Administrative/service-role credentials are server-only and must never be instantiated in client-side code.
 
-The public TrophyBridge API should access data through controlled server routes rather than handing database-wide privileges to a browser client.
+M1 now enforces this requirement directly: RLS is enabled on all ten TrophyBridge application tables in the exposed `public` schema.
+
+M1 deliberately defines **no client policies**. That means browser/anonymous access is denied by default while the application does not yet have a finished ownership/authentication layer. Server-side service-role access is the intended writer until M3 introduces TrophyBridge authentication and owner-scoped policies.
+
+The public TrophyBridge API will access data through controlled server routes rather than handing database-wide privileges to a browser client.
+
+### Persistence integrity as a security control
+
+M1 also moves several trust boundaries into PostgreSQL:
+
+- provider game identities and player/trophy state cannot be duplicated;
+- one title cannot silently acquire multiple base trophy groups;
+- trophies cannot be attached to groups from another game;
+- progress events cannot attribute a trophy to the wrong game;
+- progress events cannot attribute a sync run to the wrong PSN account;
+- repeated syncs cannot duplicate the same earned/discovery event;
+- `earned=true` cannot silently regress to `false` through ordinary updates;
+- a trusted earlier `earned_at` timestamp cannot be replaced by a later or missing value.
+
+These controls reduce the damage a buggy future sync writer can cause to durable state.
 
 ## Logging
 
@@ -175,6 +196,14 @@ A transient upstream failure must not corrupt durable player state. In particula
 - stale-but-valid data remains available when PSN is unavailable;
 - concurrent refreshes are coalesced or locked.
 
+M1 implements the durable monotonic trophy rules and the `sync_targets` persistence needed for later synchronization locking/cooldowns. The actual lock-acquisition algorithm belongs to the sync milestones.
+
+## Database verification
+
+GitHub Actions provisions a disposable PostgreSQL 17 service and applies every migration before running SQL invariant tests.
+
+The suite verifies RLS enablement, monotonic trophy state, idempotent UPSERT behavior, cross-entity foreign keys, event deduplication, and base/DLC separation. It does not require a real Supabase project or PSN credentials.
+
 ## Repository hygiene
 
 The repository is designed to be public.
@@ -185,6 +214,7 @@ Required controls:
 - `.env.example` contains names only, never values;
 - PSN test fixtures are anonymized;
 - CI never requires a real PSN account;
+- database CI uses fabricated identities only;
 - security-sensitive failures are documented without publishing credentials.
 
 ## Incident response principles
