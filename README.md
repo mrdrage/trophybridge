@@ -4,7 +4,7 @@ A privacy-first bridge between PlayStation trophy data and AI-assisted platinum 
 
 TrophyBridge is being built to synchronize PlayStation trophy progress, normalize base-game and DLC data, and expose a stable read-only API that an AI assistant can use to guide a player toward a platinum trophy.
 
-> Status: **M0 · Foundation complete**. `v0.1.0` remains in development; the next milestone is **M1 · Domain Model**.
+> Status: **M1 · Domain Model complete**. `v0.1.0` remains in development; the next milestone is **M2 · PSN Provider**.
 
 ## MVP goal
 
@@ -38,6 +38,7 @@ Dashboard  Public API
 - Trophy state is monotonic: once a trophy is known to be earned, an incomplete sync cannot silently un-earn it.
 - Public sharing is read-only, revocable, non-indexed, and token based.
 - The API is versioned and includes an AI-oriented context endpoint.
+- PostgreSQL protects critical domain invariants instead of trusting every future application writer to reproduce them perfectly.
 
 ## Stack
 
@@ -61,7 +62,7 @@ pnpm install
 pnpm dev
 ```
 
-Quality gate:
+Application quality gate:
 
 ```bash
 pnpm lint
@@ -71,13 +72,21 @@ pnpm build
 pnpm test:e2e
 ```
 
+Database invariant suite, using a disposable PostgreSQL database:
+
+```bash
+DATABASE_URL=postgresql://... pnpm test:db
+```
+
+GitHub Actions runs the database migrations and invariant suite against PostgreSQL 17 in addition to the application checks.
+
 The public foundation health endpoint is available at `/api/public/v1/health`.
 
 ## Development roadmap
 
 - ✅ **M0 Foundation**: project skeleton, CI, tests, documentation.
-- **M1 Domain Model**: database schema and migrations.
-- **M2 PSN Provider**: mock adapter, then real `psn-api` adapter.
+- ✅ **M1 Domain Model**: PostgreSQL schema, migrations, constraints, RLS, and database invariant tests.
+- **M2 PSN Provider**: provider mapping and real `psn-api` adapter behind `PsnProvider`.
 - **M3 Authentication**: PSN connection and encrypted credential storage.
 - **M4 Library Sync**: import PlayStation games.
 - **M5 Trophy Sync**: game groups, trophies, earned state and DLC separation.
@@ -86,6 +95,25 @@ The public foundation health endpoint is available at `/api/public/v1/health`.
 - **M8 AI Context**: compact API for AI-assisted platinum guidance.
 - **M9 Dashboard**: production MVP UI.
 - **M10 Hardening**: security review, observability and release documentation.
+
+## M1 database model
+
+The executable schema lives under [`supabase/migrations/`](./supabase/migrations). M1 creates:
+
+- `psn_accounts`
+- `games`
+- `account_games`
+- `trophy_groups`
+- `trophies`
+- `player_trophies`
+- `sync_runs`
+- `progress_events`
+- `share_links`
+- `sync_targets`
+
+Important guarantees include idempotent player-trophy UPSERTs, monotonic earned state, preservation of trusted earned timestamps, one base trophy group per game, title-wide trophy IDs, deduplicated progress events, and deny-by-default RLS on the exposed application tables.
+
+See [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md) for the definitive model.
 
 ## Documentation
 
