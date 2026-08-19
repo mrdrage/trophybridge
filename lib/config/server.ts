@@ -81,3 +81,36 @@ export function getLibrarySyncPolicy(env: NodeJS.ProcessEnv = process.env) {
     ),
   };
 }
+
+export function getGameSyncPolicy(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    minIntervalSeconds: boundedInteger(
+      "GAME_SYNC_MIN_INTERVAL_SECONDS",
+      env.GAME_SYNC_MIN_INTERVAL_SECONDS,
+      300,
+      60,
+      86_400,
+    ),
+    maxGroupsPerSync: boundedInteger(
+      "GAME_SYNC_MAX_GROUPS",
+      env.GAME_SYNC_MAX_GROUPS,
+      100,
+      1,
+      100,
+    ),
+    maxTrophiesPerSync: boundedInteger(
+      "GAME_SYNC_MAX_TROPHIES",
+      env.GAME_SYNC_MAX_TROPHIES,
+      1000,
+      1,
+      1000,
+    ),
+    staleRunAfterSeconds: boundedInteger(
+      "GAME_SYNC_STALE_AFTER_SECONDS",
+      env.GAME_SYNC_STALE_AFTER_SECONDS,
+      600,
+      60,
+      3600,
+    ),
+  };
+}
