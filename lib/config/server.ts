@@ -25,7 +25,11 @@ export function getSupabaseAdminConfig(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export function getAppUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const value = requireValue("APP_URL", env.APP_URL ?? "http://localhost:3000");
+  const developmentFallback =
+    env.NODE_ENV === "development" || env.NODE_ENV === "test"
+      ? "http://localhost:3000"
+      : undefined;
+  const value = requireValue("APP_URL", env.APP_URL ?? developmentFallback);
   return new URL(value).origin;
 }
 
