@@ -2,9 +2,11 @@
 
 ## Boundary
 
-TrophyBridge treats PlayStation Network as an external provider. Application code consumes TrophyBridge-owned `PsnProvider` types rather than raw `psn-api` responses.
+TrophyBridge treats PlayStation Network as the factual external provider. Application code consumes TrophyBridge-owned `PsnProvider` types rather than raw `psn-api` responses.
 
-M2 implements `PsnApiProvider`. M3 implements the authentication lifecycle that safely creates it.
+M2 implements `PsnApiProvider`. M3 implements the authentication lifecycle that safely creates it. M4-M6 reuse this boundary for library, detailed trophy, and progress-event synchronization.
+
+TrophyBridge does **not** use PSNProfiles or another trophy community site as the source for personal earned state, trophy rarity, or earned-rate percentages.
 
 ## Locale
 
@@ -16,7 +18,7 @@ it-IT
 
 `preferred_locale` is persisted on the connected PSN account and passed into `PsnApiProvider`, which propagates it as `Accept-Language` on supported trophy calls. This keeps trophy names/descriptions aligned with the language used in-game when PSN supplies localized metadata.
 
-## M2 provider operations
+## Provider operations
 
 ```text
 getAccount()
@@ -28,7 +30,7 @@ getUserTrophies(game)
 
 The adapter handles pagination, PS5 `trophy2` versus legacy `trophy`, runtime validation, base/additional/unknown group normalization, rarity/earned rate, hidden trophies, and stable provider errors.
 
-## Implemented M3 authentication lifecycle
+## Authentication lifecycle
 
 ### Initial connection
 
@@ -43,13 +45,10 @@ exchangeAccessCodeForAuthTokens
   |
   +--> short-lived access token
   |
-  +--> refresh token
+  +--> refresh token + provider-reported refresh expiry
   |
   v
-makeUniversalSearch(exact Online ID)
-  |
-  v
-stable PSN accountId
+resolve stable PSN accountId
   |
   v
 getProfileFromAccountId
@@ -58,7 +57,7 @@ getProfileFromAccountId
 require isMe=true + matching Online ID
 ```
 
-NPSSO is never stored. The access token is not persisted. Only the refresh token is durable, and only after AES-256-GCM encryption.
+NPSSO is bootstrap-only and is never stored. The access token is not persisted. Only the refresh token is durable, and only after AES-256-GCM encryption.
 
 ### Refresh
 
@@ -75,20 +74,29 @@ exchangeRefreshTokenForAuthTokens
   |
   +--> rotated refresh token, if provided
   |
+  +--> new refresh-token lifetime, if provided
+  |
   v
 re-encrypt under active key version
+  |
+  v
+persist next refresh expiry
   |
   v
 PsnApiProvider({ accessToken, account, locale: "it-IT" })
 ```
 
-An expired or rejected durable credential transitions to `reauth_required`. Temporary upstream failures use stable error codes and do not expose raw token material.
+`psn-api` exposes `refreshTokenExpiresIn` in the PlayStation token response. TrophyBridge converts that duration into `refresh_token_expires_at`. When a refresh response supplies a new lifetime, TrophyBridge moves the stored expiry forward from the refresh time; when it does not, the previously known expiry is retained.
+
+This is why NPSSO is **not** required for normal library/game synchronization. The encrypted refresh credential is used instead. A fresh NPSSO is needed only when the durable refresh credential has actually expired, has been rejected/revoked by PlayStation, or otherwise cannot be refreshed. TrophyBridge then moves the connection to `reauth_required`.
+
+Provider token lifetimes are external behavior rather than a TrophyBridge constant. The application trusts the lifetime returned by PlayStation instead of hard-coding a promised number of days.
 
 ## Provider construction
 
-`PsnConnectionService.createProviderForOwner(ownerUserId)` is the M3-to-M4 boundary. It obtains a fresh short-lived authorization, loads the verified stable PSN identity, applies the saved locale, and returns a ready `PsnApiProvider`.
+`PsnConnectionService.createProviderForOwner(ownerUserId)` is the authentication-to-sync boundary. It obtains fresh short-lived authorization from the encrypted refresh credential, loads the verified stable PSN identity, applies the saved locale, and returns a ready `PsnApiProvider`.
 
-M4 must use this factory rather than loading/decrypting credentials itself.
+Library/trophy/event synchronization must use this factory rather than loading or decrypting credentials directly.
 
 ## Connection routes
 
@@ -107,7 +115,21 @@ The connect request contains `onlineId` and `npsso`. The response never echoes N
 
 `psn_credentials` is server-only and stores ciphertext, IV, GCM authentication tag, key version, refresh expiry, and refresh timestamp. Browser roles receive no privileges on the table.
 
-Disconnect deletes the credential while leaving the normalized account and trophy history intact.
+Disconnect deletes the credential while leaving normalized factual account/trophy history intact.
+
+## Trophy earned-rate provenance
+
+The percentage shown beside a TrophyBridge trophy comes from PlayStation's user-trophy payload through the `trophyEarnedRate` field exposed by `psn-api`.
+
+TrophyBridge maps:
+
+```text
+PSN trophyEarnedRate -> PsnUserTrophy.earnedRate -> trophies.earned_rate -> private UI "% giocatori"
+```
+
+The companion PSN field `trophyRare` is normalized into `ultra_rare`, `very_rare`, `rare`, `common`, or `unknown`.
+
+No PSNProfiles scrape, community database, or independently calculated sample is involved in this factual percentage. A community site's displayed rate can therefore differ from TrophyBridge because that site may use a different member population or its own update model, while TrophyBridge preserves the rate returned through the PlayStation-facing provider.
 
 ## Trophy groups
 
@@ -133,8 +155,8 @@ progressPercent -> 100 for earned trophies, otherwise null
 
 No missing progress is fabricated.
 
-## Testing
+## Testing and live validation
 
-CI does not contact PSN. M2 uses sanitized provider fixtures. M3 injects fake PSN auth calls and verifies identity matching, token rotation, encrypted persistence, credential expiry, disconnection, and key rotation without live credentials.
+CI does not contact PSN. Provider/auth tests use sanitized/fabricated data and verify identity matching, token rotation, encrypted persistence, credential expiry, snapshot validation, and event behavior without live credentials.
 
-A true live smoke requires external Supabase configuration plus a user-entered NPSSO in the private dashboard. That activation is deliberately outside CI and no NPSSO should ever be pasted into an issue, commit, or AI chat.
+Real validation uses the private dashboard. NPSSO must be entered only there when reauthentication is required and must never be pasted into an issue, commit, log, screenshot, or AI chat.
