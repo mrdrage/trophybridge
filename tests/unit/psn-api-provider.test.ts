@@ -29,24 +29,28 @@ const userTrophiesPage2 = fixture<UserTrophiesEarnedForTitleResponse>(
 );
 
 function makeCalls() {
-  const getUserTitlesMock = vi.fn(async (_auth, _accountId, options) =>
-    options?.offset === 1 ? userTitlesPage2 : userTitlesPage1,
+  const getUserTitlesMock = vi.fn(
+    async (...args: Parameters<PsnApiCalls["getUserTitles"]>) =>
+      args[2]?.offset === 1 ? userTitlesPage2 : userTitlesPage1,
   );
-  const getTitleTrophyGroupsMock = vi.fn(async () => trophyGroups);
-  const getTitleTrophiesMock = vi.fn(async (_auth, _communicationId, _groupId, options) =>
-    options?.offset === 2 ? titleTrophiesPage2 : titleTrophiesPage1,
+  const getTitleTrophyGroupsMock = vi.fn(
+    async (..._args: Parameters<PsnApiCalls["getTitleTrophyGroups"]>) => trophyGroups,
+  );
+  const getTitleTrophiesMock = vi.fn(
+    async (...args: Parameters<PsnApiCalls["getTitleTrophies"]>) =>
+      args[3]?.offset === 2 ? titleTrophiesPage2 : titleTrophiesPage1,
   );
   const getUserTrophiesEarnedForTitleMock = vi.fn(
-    async (_auth, _accountId, _communicationId, _groupId, options) =>
-      options?.offset === 2 ? userTrophiesPage2 : userTrophiesPage1,
+    async (...args: Parameters<PsnApiCalls["getUserTrophiesEarnedForTitle"]>) =>
+      args[4]?.offset === 2 ? userTrophiesPage2 : userTrophiesPage1,
   );
 
-  const calls = {
+  const calls: PsnApiCalls = {
     getUserTitles: getUserTitlesMock,
     getTitleTrophyGroups: getTitleTrophyGroupsMock,
     getTitleTrophies: getTitleTrophiesMock,
     getUserTrophiesEarnedForTitle: getUserTrophiesEarnedForTitleMock,
-  } as unknown as PsnApiCalls;
+  };
 
   return {
     calls,
