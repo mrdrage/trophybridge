@@ -39,18 +39,21 @@ The MVP is complete when the following real flow works end to end:
 - pnpm 11.20.0
 - PostgreSQL through Supabase
 - Supabase Auth, initially GitHub OAuth
-- Zod for runtime validation
+- `psn-api` 2.18.1, exact pinned version, accessible only through `PsnApiProvider`
+- Zod for runtime provider/API validation
 - Vitest for application tests
 - PostgreSQL SQL suites for persistence invariants
 - Playwright for end-to-end tests
 - GitHub Actions for CI
 - Vercel planned for deployment
-- Community `psn-api` library only behind an internal adapter
 
 ## Architecture
 
 ```text
 PlayStation Network
+        |
+        v
+   PsnApiProvider
         |
         v
     PsnProvider
@@ -71,7 +74,7 @@ Application code must depend on `PsnProvider`, never directly on `psn-api` outsi
 
 ## Implemented domain model
 
-M1 is complete. PostgreSQL migrations now create:
+M1 is complete. PostgreSQL migrations create:
 
 - `psn_accounts`
 - `games`
@@ -108,9 +111,122 @@ Important database guarantees:
 
 M1 intentionally creates no browser/client RLS policies. Until M3, direct client access is denied by default and server/service-role access is the intended writer.
 
+## Implemented PSN provider
+
+M2 is complete at the code/contract level. The repository contains:
+
+```text
+lib/psn/provider.ts
+lib/psn/mock-provider.ts
+lib/psn/psn-api-provider.ts
+lib/psn/mapper.ts
+lib/psn/errors.ts
+```
+
+`PsnApiProvider` receives an existing `AuthorizationPayload` plus stable `PsnAccount` identity. Durable authentication is deliberately outside the provider and belongs to M3.
+
+### Provider capabilities
+
+`PsnProvider` exposes:
+
+- `getAccount()`
+- `getGames()`
+- `getTrophyGroups(game)`
+- `getTrophies(game)`
+- `getUserTrophies(game)`
+
+The real adapter uses the pinned `psn-api` 2.18.1 package and supports:
+
+- paginated `getUserTitles()` library retrieval;
+- `getTitleTrophyGroups()`;
+- paginated `getTitleTrophies(..., "all")`;
+- paginated `getUserTrophiesEarnedForTitle(..., "all")`;
+- PS5 `trophy2` and legacy `trophy` service-name propagation;
+- configurable `Accept-Language` header, defaulting to `en-US`;
+- repeated-pagination-offset protection;
+- runtime validation of fields TrophyBridge relies on;
+- stable provider error normalization.
+
+### Domain mapping
+
+M2 maps title data into provider-neutral domain types including:
+
+- communication/service identity;
+- platform list;
+- aggregate defined/earned trophy counts;
+- title progress and last update;
+- trophy group kind (`base`, `dlc`, `unknown`);
+- trophy metadata and hidden state;
+- personal earned state and timestamp;
+- rarity and earned-rate percentage;
+- PS5 progress target when present.
+
+Group classification is deliberately conservative:
+
+```text
+default -> base
+001/002/... (exactly three digits) -> dlc
+anything else -> unknown
+```
+
+### Numeric-progress limitation
+
+The pinned `psn-api` `UserThinTrophy` contract exposes the PS5 progress target but not the player's current numeric progress value.
+
+TrophyBridge therefore uses:
+
+```text
+progressTarget -> provider value when available
+progressValue -> null
+progressPercent -> 100 only for an earned trophy, otherwise null
+```
+
+No current progress value is fabricated. If a future verified provider exposes it, the domain contract can be extended deliberately.
+
+### Provider errors
+
+M2 normalizes provider failures into:
+
+```text
+AUTH_REQUIRED
+FORBIDDEN
+NOT_FOUND
+RATE_LIMITED
+INVALID_RESPONSE
+UPSTREAM_UNAVAILABLE
+```
+
+Errors carry a `retryable` flag so later synchronization code does not parse raw provider strings.
+
+## Provider verification
+
+CI never contacts PlayStation Network and never requires credentials.
+
+Sanitized/fabricated fixtures live in:
+
+```text
+tests/fixtures/psn/
+```
+
+M2 unit/contract coverage verifies:
+
+- multi-page game retrieval;
+- multi-page title/user trophy retrieval;
+- service-name propagation;
+- shared-platform normalization;
+- base/DLC/unknown group classification;
+- rarity/earned-rate conversion;
+- conservative progress semantics;
+- locale headers;
+- malformed-response rejection;
+- provider error normalization;
+- deterministic `MockPsnProvider` behavior.
+
+A live PSN smoke test is intentionally deferred until M3 establishes a safe real authentication lifecycle.
+
 ## Database verification
 
-GitHub Actions now has a dedicated PostgreSQL 17 job.
+GitHub Actions has a dedicated PostgreSQL 17 job.
 
 The database test runner:
 
@@ -120,21 +236,7 @@ scripts/test-db.sh
 
 applies a minimal `auth.users` CI stub, then all migrations, then every `tests/integration/domain_*.sql` suite.
 
-Current SQL integration coverage verifies:
-
-- migration application;
-- idempotent player-trophy UPSERTs;
-- monotonic earned state;
-- earned timestamp preservation/refinement;
-- one-base-group rules;
-- title-wide trophy ID uniqueness;
-- trophy/group game integrity;
-- progress-event game/account integrity;
-- event deduplication;
-- base/DLC structural separation;
-- RLS enablement.
-
-CI never contacts PlayStation Network and uses fabricated identities only.
+Current SQL integration coverage verifies migration application, idempotent player-trophy UPSERTs, monotonic earned state, earned timestamp preservation/refinement, one-base-group rules, title-wide trophy ID uniqueness, cross-entity integrity, event deduplication, base/DLC separation, and RLS enablement.
 
 ## Synchronization design
 
@@ -146,7 +248,7 @@ Public reads use persisted data. A future `fresh=1` mechanism may request a boun
 
 `progress_events` records meaningful changes instead of storing full duplicate snapshots. Initial events include `game_discovered`, `trophy_earned`, and `platinum_earned`.
 
-The `sync_targets` table now persists the account/game pair and timing fields needed for later cooldown/locking logic, but the actual lock-acquisition algorithm is not part of M1.
+The `sync_targets` table persists the account/game pair and timing fields needed for later cooldown/locking logic, but lock acquisition is implemented only when sync orchestration is built.
 
 ## Authentication and secrets
 
@@ -154,7 +256,9 @@ The planned PSN bootstrap uses NPSSO only transiently. NPSSO is password-equival
 
 No real PSN credential storage exists yet. That belongs to M3.
 
-Public share links use high-entropy opaque tokens, are read-only and revocable, and should be non-indexed. M1 creates the `share_links` persistence shape only; token generation/hashing behavior belongs to M7.
+The real provider is already designed to receive a short-lived authorization object from M3 rather than own credential persistence itself.
+
+Public share links use high-entropy opaque tokens, are read-only and revocable, and should be non-indexed. M1 created the `share_links` persistence shape only; token generation/hashing behavior belongs to M7.
 
 ## Public API contract
 
@@ -184,7 +288,7 @@ Hidden unearned trophy descriptions should be spoiler-safe by default in the fut
 
 - ✅ M0 Foundation: skeleton, CI, tests, documentation.
 - ✅ M1 Domain Model: PostgreSQL schema, migrations, constraints, RLS, and database invariant tests.
-- M2 PSN Provider: real provider mapping and adapter.
+- ✅ M2 PSN Provider: real adapter, runtime mapping/validation, pagination, provider errors, sanitized fixtures and tests.
 - M3 Authentication: PSN connection and encrypted credential lifecycle.
 - M4 Library Sync: import PlayStation titles.
 - M5 Trophy Sync: trophy groups, earned state, base/DLC separation.
@@ -196,36 +300,39 @@ Hidden unearned trophy descriptions should be spoiler-safe by default in the fut
 
 ## Current implementation state
 
-The repository contains a Next.js/TypeScript application shell, public health route, provider-neutral `PsnProvider`, `MockPsnProvider`, Vitest tests, Playwright smoke coverage, PostgreSQL migrations and SQL invariant suites, ESLint/typecheck/build scripts, three-part GitHub Actions CI, `.env.example`, architecture/API/data-model/security/PSN documentation, and ADRs.
+The repository contains a Next.js/TypeScript application shell, public health route, provider-neutral `PsnProvider`, `MockPsnProvider`, real `PsnApiProvider`, runtime mappers, provider error normalization, sanitized PSN fixtures, Vitest coverage, Playwright smoke coverage, PostgreSQL migrations and SQL invariant suites, ESLint/typecheck/build scripts, three-part GitHub Actions CI, `.env.example`, architecture/API/data-model/security/PSN documentation, and ADRs.
 
-M1 deliberately does **not** connect a real Supabase production project or make real PSN network calls. The schema is validated against disposable PostgreSQL in CI and is ready to receive normalized provider data.
+No Supabase production project is connected yet and no real PSN credential is stored. Automated tests remain fully offline with respect to PSN.
 
 ## Next milestone
 
-**M2 · PSN Provider**.
+**M3 · Authentication**.
 
-The next development session should implement the provider-mapping layer and real `PsnApiProvider` behind the existing `PsnProvider` interface. It should use sanitized fixtures and contract tests first, then verify a small manual real-PSN smoke path without allowing live PSN calls in CI.
+M3 should provide the real connection lifecycle that constructs `PsnApiProvider` safely:
 
-M2 should pay particular attention to:
+1. authenticate the TrophyBridge user through Supabase Auth;
+2. accept NPSSO only through an authenticated server-side connection flow, never through source code or logs;
+3. exchange NPSSO for PlayStation authorization;
+4. resolve and persist stable PSN account identity;
+5. discard NPSSO;
+6. encrypt durable refresh credentials with AES-256-GCM and key versioning;
+7. refresh access authorization when needed;
+8. expose explicit connection states such as `connected`, `refreshing`, `reauth_required`, and `error`;
+9. construct `PsnApiProvider` from the short-lived authorization and account identity;
+10. add a manual smoke path that can call PSN without ever making live network access part of CI.
 
-- pagination of title/trophy endpoints;
-- PS5 `trophy2` versus legacy `trophy` service names;
-- mapping `default` and additional trophy groups into `base` / `dlc` / `unknown` without guessing;
-- progress target/value fields and missing optional metadata;
-- hidden trophies and locale/header handling;
-- converting upstream numeric/string fields into the exact M1 database-compatible domain types;
-- stable error normalization so later sync code does not depend on raw provider errors.
+Before the first live trophy import, decide the preferred PSN trophy locale (for example `it-IT` versus account/default language). `PsnApiProvider` already supports this setting.
 
-Do not start durable PSN credential storage until M2 provider mapping is stable. Authentication lifecycle remains M3.
+Do not start library persistence orchestration until the authentication/credential lifecycle is secure enough to provide a valid provider instance. Library sync remains M4.
 
 ## Documentation map
 
 - `README.md`: project overview and roadmap
-- `docs/ARCHITECTURE.md`: system boundaries and implemented persistence flow
+- `docs/ARCHITECTURE.md`: system boundaries and persistence/provider flow
 - `docs/API.md`: public API contract
 - `docs/DATA_MODEL.md`: definitive M1 persistence model
 - `docs/SECURITY.md`: security and privacy model
-- `docs/PSN_INTEGRATION.md`: provider/auth/sync boundary
+- `docs/PSN_INTEGRATION.md`: implemented M2 provider contract and auth boundary
 - `docs/decisions/`: Architecture Decision Records
 - `CHANGELOG.md`: notable changes
 - `PROJECT_HANDOFF.md`: continuity document for a fresh development chat
