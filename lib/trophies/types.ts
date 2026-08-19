@@ -31,6 +31,7 @@ export interface PersistGameSnapshotResult {
   baseEarnedCount: number;
   additionalTrophyCount: number;
   additionalEarnedCount: number;
+  newTrophiesFound: number;
 }
 
 export interface GameSyncSummary extends PersistGameSnapshotResult {
@@ -68,6 +69,19 @@ export interface TrophyView {
   progressPercent: number | null;
 }
 
+export interface ProgressEventView {
+  id: string;
+  eventType: "trophy_earned" | "platinum_earned";
+  occurredAt: string;
+  detectedAt: string;
+  trophyId: string;
+  psnTrophyId: number;
+  trophyName: string | null;
+  trophyType: "bronze" | "silver" | "gold" | "platinum";
+  groupId: string;
+  groupKind: "base" | "dlc" | "unknown";
+}
+
 export interface GameTrophyDetail {
   gameId: string;
   title: string;
@@ -87,6 +101,7 @@ export interface GameTrophyDetail {
   };
   groups: TrophyGroupView[];
   trophies: TrophyView[];
+  recentEvents: ProgressEventView[];
 }
 
 export interface GameTrophySnapshot {
@@ -113,12 +128,14 @@ export interface TrophyRepository {
     status: "success" | "failed";
     finishedAt: string;
     trophiesProcessed: number;
+    newTrophiesFound?: number;
     errorCode?: string | null;
     errorMessage?: string | null;
   }): Promise<void>;
   persistGameSnapshot(
     psnAccountId: string,
     gameId: string,
+    runId: string,
     snapshot: GameTrophySnapshot,
     seenAt: string,
     nextAllowedAt: string,
