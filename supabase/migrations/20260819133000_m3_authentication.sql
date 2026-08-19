@@ -42,8 +42,12 @@ for select
 to authenticated
 using (owner_user_id = auth.uid());
 
--- Even ciphertext is server-only. The Supabase service role bypasses RLS; browser roles
--- receive neither table privileges nor policies for this table.
+-- The service role is the only application writer for M3 connection state.
+grant select, insert, update on public.psn_accounts to service_role;
+grant select, insert, update, delete on public.psn_credentials to service_role;
+
+-- Even ciphertext is server-only. Browser roles receive neither table privileges
+-- nor policies for the credential table.
 revoke all on public.psn_credentials from anon, authenticated;
 
 comment on column public.psn_accounts.preferred_locale is
