@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -65,9 +66,8 @@ export function LibraryPanel({
       </div>
 
       <p className="help">
-        M4 importa solo la libreria e i contatori aggregati. I singoli trofei verranno
-        caricati in M5. La sincronizzazione è manuale e protetta da un cooldown per
-        restare nel budget gratuito.
+        M4 mantiene leggera la libreria. Apri un singolo gioco per sincronizzare in M5 gruppi,
+        trofei e stato ottenuto senza idratare tutta la collezione.
       </p>
 
       <div className="actions">
@@ -93,7 +93,14 @@ export function LibraryPanel({
                 <strong>{game.title}</strong>
                 <span>{game.platforms.join(" · ") || "Piattaforma non disponibile"}</span>
               </div>
-              <span>{game.progressPercent == null ? "—" : `${game.progressPercent}%`}</span>
+              <div className="library-row-actions">
+                <span className="library-progress">
+                  {game.progressPercent == null ? "—" : `${game.progressPercent}%`}
+                </span>
+                <Link className="button compact-button" href={`/dashboard/games/${game.id}`}>
+                  Trofei
+                </Link>
+              </div>
             </article>
           ))}
           {initialOverview.totalCount > initialOverview.games.length && (
