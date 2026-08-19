@@ -1,0 +1,17 @@
+{
+  "trophySetVersion": "01.00",
+  "hasTrophyGroups": true,
+  "lastUpdatedDateTime": "2026-08-18T21:45:00Z",
+  "trophies": [
+    {
+      "trophyId": 3,
+      "trophyHidden": false,
+      "trophyType": "bronze",
+      "earned": false,
+      "trophyRare": 2,
+      "trophyEarnedRate": "22.7"
+    }
+  ],
+  "totalItemCount": 3,
+  "previousOffset": 0
+}
