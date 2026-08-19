@@ -19,7 +19,7 @@ M2 contains two implementations:
 - `MockPsnProvider`: deterministic domain fixtures for application tests.
 - `PsnApiProvider`: real adapter over the pinned `psn-api` package.
 
-`psn-api` is pinned to version `2.18.0` so TrophyBridge is tested against a known provider contract. Future upgrades should be deliberate and validated through the M2 fixture suite.
+`psn-api` is pinned to version `2.18.1` so TrophyBridge is tested against a known provider contract. Future upgrades should be deliberate and validated through the M2 fixture suite.
 
 ## Construction and authentication boundary
 
