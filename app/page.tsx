@@ -2,7 +2,7 @@ const principles = [
   "Privacy-first by design",
   "Base game and additional groups kept separate",
   "Encrypted server-only PSN authorization",
-  "Provider-isolated PlayStation integration",
+  "Zero-cost bounded synchronization",
 ];
 
 export default function HomePage() {
@@ -16,7 +16,7 @@ export default function HomePage() {
           offrirà un&apos;API pubblica revocabile affinché un assistente AI sappia
           esattamente dove si trova il giocatore sulla strada verso il Platino.
         </p>
-        <div className="status">M3 · Authentication implementation complete</div>
+        <div className="status">M4 · Library Sync complete</div>
       </section>
 
       <section className="principles" aria-label="Project principles">

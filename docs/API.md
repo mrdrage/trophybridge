@@ -1,15 +1,5 @@
 # TrophyBridge API v1
 
-## Design goals
-
-The public API is optimized for three properties:
-
-1. Stable machine-readable contracts.
-2. Minimal disclosure of player data.
-3. Easy navigation by an AI client starting from one permanent share URL.
-
-All public endpoints are read-only.
-
 ## Base paths
 
 Private authenticated routes:
@@ -18,150 +8,97 @@ Private authenticated routes:
 /api/private/v1/...
 ```
 
-Public share routes:
+Future public share routes:
 
 ```text
 /api/public/v1/share/{token}/...
 ```
 
-The current foundation also exposes a non-sensitive service health route:
+Current non-sensitive health route:
 
 ```text
 GET /api/public/v1/health
 ```
 
-## Share root
+## Current private API
 
-Planned endpoint:
+### PSN connection
+
+```text
+POST /api/private/v1/psn/connect
+GET  /api/private/v1/psn/status
+POST /api/private/v1/psn/refresh
+POST /api/private/v1/psn/disconnect
+```
+
+These routes require a TrophyBridge owner session. Authentication material is never returned.
+
+### Library synchronization
+
+```text
+POST /api/private/v1/library/sync
+```
+
+M4 performs one bounded library synchronization for the authenticated owner. The route:
+
+- gets PSN authorization through `PsnConnectionService`;
+- calls the normalized `PsnProvider.getGames()` contract;
+- persists a last-good atomic library snapshot;
+- applies concurrency, cooldown, and maximum-library guardrails;
+- returns only safe summary metadata.
+
+Successful shape:
+
+```json
+{
+  "summary": {
+    "processedCount": 120,
+    "discoveredCount": 3,
+    "syncedAt": "2026-08-19T15:00:00.000Z",
+    "nextAllowedAt": "2026-08-19T16:00:00.000Z"
+  }
+}
+```
+
+Representative bounded errors include `SYNC_COOLDOWN`, `SYNC_IN_PROGRESS`, `LIBRARY_TOO_LARGE`, `PSN_RATE_LIMITED`, `PSN_AUTH_REQUIRED`, and `SYNC_FAILED`.
+
+All private responses use `Cache-Control: private, no-store`.
+
+## Planned public share API
+
+Share root:
 
 ```text
 GET /api/public/v1/share/{token}
 ```
 
-Example shape:
-
-```json
-{
-  "schema_version": "1.0",
-  "generated_at": "2026-08-19T08:00:00Z",
-  "player": {
-    "online_id": "example"
-  },
-  "_links": {
-    "games": "/api/public/v1/share/.../games"
-  }
-}
-```
-
-The response is deliberately self-describing. A client should be able to discover subsequent endpoints by following `_links` instead of hard-coding internal URL conventions.
-
-## Games collection
-
-Planned endpoint:
+Games:
 
 ```text
 GET /api/public/v1/share/{token}/games
 ```
 
-Each game should include:
-
-- internal TrophyBridge game ID;
-- title;
-- platform(s);
-- aggregate progress;
-- base-game trophy counts;
-- DLC trophy counts;
-- platinum status;
-- last successful synchronization;
-- links to detail, trophies and AI context.
-
-Example:
-
-```json
-{
-  "games": [
-    {
-      "id": "uuid",
-      "title": "Final Fantasy XVI",
-      "platforms": ["PS5"],
-      "base_game": {
-        "earned": 16,
-        "total": 50,
-        "platinum_earned": false
-      },
-      "dlc": {
-        "earned": 0,
-        "total": 19
-      },
-      "last_synced_at": "2026-08-19T08:00:00Z",
-      "_links": {
-        "details": "...",
-        "trophies": "...",
-        "ai_context": "..."
-      }
-    }
-  ]
-}
-```
-
-## Game detail
-
-Planned endpoint:
+Game detail:
 
 ```text
 GET /api/public/v1/share/{token}/games/{gameId}
 ```
 
-Returns normalized game metadata, trophy groups, aggregate progress and synchronization state.
-
-## Trophy collection
-
-Planned endpoint:
+Trophies:
 
 ```text
 GET /api/public/v1/share/{token}/games/{gameId}/trophies
-```
-
-Supported filters:
-
-```text
 ?scope=base|dlc|all
 ?status=earned|missing|all
 ```
 
-Example trophy:
-
-```json
-{
-  "id": "uuid",
-  "name": "Example Trophy",
-  "description": "Complete something.",
-  "type": "silver",
-  "group": "base",
-  "earned": false,
-  "earned_at": null,
-  "hidden": false,
-  "progress": {
-    "current": 7,
-    "target": 20,
-    "percent": 35
-  }
-}
-```
-
-When the provider does not expose numeric progress, `progress` is `null`. TrophyBridge must not infer progress values.
-
-## AI context
-
-Planned endpoint:
+AI context:
 
 ```text
 GET /api/public/v1/share/{token}/games/{gameId}/ai-context
 ```
 
-This is a first-class API product, not a dump of the database. It should provide enough factual context for an AI assistant to reason about the player's next platinum steps while remaining compact.
-
-Planned top-level fields:
+Planned `ai-context` top-level fields:
 
 ```text
 schema_version
@@ -172,72 +109,27 @@ recent_activity
 sync
 ```
 
-Example:
+The public API will be read-only, allowlist-based, revocable, and non-indexed. Authentication material can never appear in public output.
 
-```json
-{
-  "schema_version": "1.0",
-  "identity": {
-    "player": "example",
-    "game": "Final Fantasy XVI",
-    "platform": "PS5"
-  },
-  "progress": {
-    "platinum_earned": false,
-    "base_earned": 16,
-    "base_total": 50,
-    "dlc_earned": 0,
-    "dlc_total": 19
-  },
-  "missing_trophies": [],
-  "recent_activity": [],
-  "sync": {
-    "last_successful_at": "2026-08-19T08:00:00Z",
-    "stale": false
-  }
-}
-```
+## Numeric progress honesty
 
-Future Trophy Intelligence may add a `guidance` block without changing the factual responsibility of TrophyBridge Core.
+When PSN does not expose a current numeric trophy-progress value, TrophyBridge returns `null` rather than infer one. A target value alone is not enough to invent current progress.
 
-## Freshness
+## Freshness and zero-cost behavior
 
-Normal public reads use the durable database state.
+Normal public reads will use durable PostgreSQL state. Opening a page or reading JSON must not automatically contact PSN.
 
-A planned optional query parameter:
+A future explicit refresh path may exist, but it must use server-side cooldowns/single-flight coordination so a client cannot create unbounded PlayStation, Vercel, or database work.
 
-```text
-?fresh=1
-```
-
-requests a game refresh before returning, subject to server-side cooldown and synchronization locking. A public client must never be able to cause unbounded calls to PlayStation Network.
-
-Initial target behavior:
-
-- data newer than roughly 10 minutes is considered fresh;
-- one game cannot be force-refreshed more often than roughly every 5 minutes;
-- if PSN is unavailable, the most recent valid snapshot remains readable and is marked stale.
-
-These intervals are configuration, not API guarantees.
+If an upstream refresh fails, the most recent valid factual state should remain readable and be marked stale where appropriate.
 
 ## Hidden trophy privacy
 
-By default an unearned hidden trophy should not reveal spoiler-bearing name or description through a share link unless the share configuration explicitly permits it.
+An unearned hidden trophy should not reveal spoiler-bearing name/description through a public share unless the future share configuration explicitly permits it.
 
-Example:
+## Public error envelope
 
-```json
-{
-  "name": "Hidden Trophy",
-  "description": null,
-  "hidden": true,
-  "earned": false
-}
-```
-
-## Error envelope
-
-All public API errors should use a stable envelope:
+Planned stable envelope:
 
 ```json
 {
@@ -250,7 +142,7 @@ All public API errors should use a stable envelope:
 }
 ```
 
-Initial error codes:
+Initial public codes include:
 
 ```text
 INVALID_SHARE_TOKEN
@@ -263,10 +155,6 @@ SYNC_IN_PROGRESS
 SYNC_FAILED
 INTERNAL_ERROR
 ```
-
-## Indexing policy
-
-Public share responses and pages must opt out of search-engine indexing using response headers and page metadata such as `X-Robots-Tag: noindex, nofollow` where appropriate.
 
 ## Versioning
 

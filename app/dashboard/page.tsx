@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 
 import { getAuthenticatedUser } from "@/lib/auth/require-user";
+import { createLibraryRepository } from "@/lib/library/runtime";
 import { createPsnAuthRepository } from "@/lib/psn/runtime";
 
 import { signOut } from "./actions";
+import { LibraryPanel } from "./library-panel";
 import { PsnConnectionPanel } from "./psn-connection-panel";
 
 export const dynamic = "force-dynamic";
@@ -21,12 +23,16 @@ export default async function DashboardPage() {
       }
     : null;
 
+  const overview = account
+    ? await createLibraryRepository().getOverview(account.id, 12)
+    : { totalCount: 0, games: [] };
+
   return (
     <main className="shell dashboard-shell">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M3</p>
-          <h1 className="section-title">Connessioni</h1>
+          <p className="eyebrow">TrophyBridge · M4</p>
+          <h1 className="section-title">PlayStation</h1>
         </div>
         <form action={signOut}>
           <button className="button" type="submit">Esci</button>
@@ -34,6 +40,10 @@ export default async function DashboardPage() {
       </header>
 
       <PsnConnectionPanel initialAccount={safeAccount} />
+      <LibraryPanel
+        initialOverview={overview}
+        connected={account?.authStatus === "connected"}
+      />
     </main>
   );
 }
