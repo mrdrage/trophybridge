@@ -17,7 +17,7 @@ export default async function LoginPage() {
         <h1 className="section-title">Il tuo ponte verso PSN.</h1>
         <p className="lede compact">
           Accedi a TrophyBridge con GitHub. La connessione PlayStation avviene poi
-          in un'area privata e le credenziali PSN non vengono mai esposte al client pubblico.
+          in un&apos;area privata e le credenziali PSN non vengono mai esposte al client pubblico.
         </p>
         <form action={signInWithGitHub}>
           <button className="button primary" type="submit">Continua con GitHub</button>
