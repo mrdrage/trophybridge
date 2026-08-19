@@ -56,11 +56,11 @@ NPSSO exists only during initial connection. The durable refresh token is AES-25
 
 `PsnApiProvider` normalizes external `psn-api` data before persistence. Provider-specific names do not leak into sync/database/public API layers.
 
-The saved account locale is passed to the provider. M3's pilot/default locale is `it-IT`.
+The saved account locale is passed to the provider. The pilot/default locale is `it-IT`.
 
 ## Persistence boundary
 
-M1 factual tables:
+Core factual tables:
 
 ```text
 psn_accounts
@@ -73,30 +73,61 @@ sync_runs
 progress_events
 share_links
 sync_targets
-```
-
-M3 adds:
-
-```text
 psn_credentials
-psn_accounts.preferred_locale
 ```
 
-PostgreSQL protects uniqueness, relational integrity, one base trophy group per title, progress ranges, event deduplication, and monotonic earned state. Credential rows are one-to-one with PSN accounts.
+PostgreSQL protects uniqueness, relational integrity, one base trophy group per title, progress ranges, event deduplication, monotonic earned state, and the one-running-library-sync invariant.
+
+M4 extends `account_games` with provider hidden state and provider last-update time. Its `persist_library_snapshot` function accepts only provider-normalized data and is executable only by the server role.
 
 ## RLS boundary
 
-All public-schema application tables use RLS. M3 introduces the first browser-readable owner policy: authenticated users may read only their own non-secret `psn_accounts` metadata. `psn_credentials` has no browser privileges or policies. Server mutations use the service-role client.
+All public-schema application tables use RLS. Authenticated users may read only their own non-secret `psn_accounts` metadata. `psn_credentials` has no browser privileges or policies. Server mutations use the privileged server client.
 
-## Synchronization model
+The M4 persistence function is explicitly revoked from `public`, `anon`, and `authenticated` roles.
 
-M4 begins the first real data synchronization. It will obtain a ready provider through `PsnConnectionService.createProviderForOwner()` and perform lightweight library synchronization. M5 later hydrates one game's groups/trophies/player state lazily.
+## M4 synchronization model
 
-A failed PSN refresh must not delete factual trophy data. Authentication status and trophy state are separate concerns.
+M4 performs the first real factual data synchronization:
+
+```text
+owner session
+  -> LibrarySyncService
+  -> PsnConnectionService.createProviderForOwner(ownerUserId)
+  -> provider.getGames()
+  -> bounded atomic library snapshot
+  -> games + account_games + sync_runs
+```
+
+The library layer is deliberately lightweight. It imports title identity, title/platform/icon metadata, hidden state, aggregate progress/counts, and synchronization timestamps. Detailed group/trophy/player hydration remains M5.
+
+A failed PSN refresh or library read must not delete factual data. A later provider response that omits a previously known title also does not delete it. Aggregate progress and trophy counters use monotonic persistence so a partial/regressive upstream response cannot silently erase known progress.
+
+Only one library synchronization can run per account. Old abandoned running records can be marked failed before a new attempt starts.
+
+## Zero-cost boundary
+
+The v0.1 operating target is €0/month. This is enforced in code as well as service selection.
+
+M4 defaults:
+
+```text
+manual sync only
+successful sync cooldown: 3600 seconds
+maximum titles accepted: 2000
+stale run recovery: 600 seconds
+recent dashboard rows: 12, bounded to 50
+```
+
+No cron/background library polling, binary image mirroring, or automatic retry loop is used. Normal dashboard/public reads must come from PostgreSQL rather than contact PSN.
+
+If quota pressure occurs, TrophyBridge should throttle or stop optional synchronization and keep serving last-good state before any paid upgrade is considered. See `docs/COST_GUARDRAILS.md` and ADR 0011.
 
 ## Public API boundary
 
 The future public API is read-only, versioned, revocable, and capability-token gated. It never has access to PSN or Supabase authentication material.
+
+The future freshness path must remain bounded so a public client cannot create unbounded upstream or hosting usage.
 
 ## Current CI architecture
 
@@ -111,15 +142,15 @@ Browser smoke
   Playwright Chromium
 ```
 
-All CI PSN identities and credentials are fabricated. No workflow makes a live PSN request.
+All CI PSN identities and credentials are fabricated. No workflow makes a live PSN request. The public repository uses standard GitHub-hosted runners only.
 
 ## Milestones
 
 - ✅ M0 Foundation
 - ✅ M1 Domain Model
 - ✅ M2 PSN Provider
-- ✅ M3 Authentication implementation
-- M4 Library Sync
+- ✅ M3 Authentication
+- ✅ M4 Library Sync
 - M5 Trophy Sync
 - M6 Progress Events
 - M7 Public Share
@@ -127,4 +158,4 @@ All CI PSN identities and credentials are fabricated. No workflow makes a live P
 - M9 Dashboard
 - M10 Hardening
 
-Production activation of M3 is an external deployment step, not a substitute for the tested authentication implementation: a real Supabase project must be configured and the owner must complete PSN connection through the private dashboard.
+The first live owner PSN smoke is an operational validation step. It must be completed through the private dashboard before claiming real PSN data has been imported; it is not replaced by fixture-based CI.

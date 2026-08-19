@@ -7,37 +7,40 @@ All notable changes to TrophyBridge are documented here. Public semantic-version
 ### Added
 
 - M0 Next.js/TypeScript foundation, public health endpoint, tests, CI, and architecture documentation.
-- M1 PostgreSQL/Supabase factual trophy model with database constraints, RLS, monotonic earned-state protection, event deduplication, and PostgreSQL invariant tests.
-- M2 provider-neutral PlayStation contract and real `PsnApiProvider` over pinned `psn-api` 2.18.1.
-- M2 pagination, `trophy2`/`trophy` propagation, runtime provider validation, stable provider errors, locale headers, and sanitized PSN fixtures.
-- M3 Supabase SSR authentication foundation with GitHub OAuth, private-session `proxy.ts`, and authenticated dashboard.
-- M3 transient NPSSO bootstrap, exact PSN identity resolution, and `isMe` verification.
-- M3 server-only `psn_credentials` persistence with AES-256-GCM encryption, fresh IVs, authentication tags, account-bound AAD, key versioning, refresh expiry, and rotation support.
-- M3 PSN refresh/disconnect lifecycle and `PsnConnectionService.createProviderForOwner()` boundary for future synchronization.
-- M3 owner-scoped `psn_accounts` read policy while credential ciphertext remains inaccessible to browser roles.
-- M3 private connect/status/refresh/disconnect API routes with non-cacheable responses.
-- M3 authentication, crypto, credential lifecycle, RLS/privilege, and connection-state tests.
+- M1 PostgreSQL/Supabase factual trophy model with constraints, RLS, monotonic earned-state protection, event deduplication, and PostgreSQL invariant tests.
+- M2 provider-neutral PlayStation contract and real `PsnApiProvider` over pinned `psn-api` 2.18.1, including pagination, validation, stable errors, locale headers, and sanitized fixtures.
+- M3 Supabase SSR authentication with GitHub OAuth, transient NPSSO bootstrap, exact PSN identity verification, AES-256-GCM encrypted durable refresh credentials, refresh/disconnect lifecycle, private routes, RLS tests, and production Supabase schema.
 - Italian `it-IT` trophy metadata locale as the pilot/default configuration.
-- Exact `@supabase/ssr` and `@supabase/supabase-js` dependency locking.
-- M3 database hardening for optimized owner RLS evaluation and composite foreign-key covering indexes.
-- Real Supabase project initialized with M1, M1 integrity, M3 authentication, and M3 hardening migrations.
+- M4 authenticated manual library synchronization through `PsnConnectionService.createProviderForOwner()` and normalized `PsnProvider.getGames()`.
+- M4 atomic `persist_library_snapshot` PostgreSQL persistence with last-good preservation, monotonic aggregate progress/counts, hidden/provider timestamp state, and processed/discovered counts.
+- M4 sync-run concurrency protection, stale-run recovery, one-hour default cooldown, and 2,000-title hard ceiling in both application and database layers.
+- M4 private dashboard library overview and `POST /api/private/v1/library/sync`.
+- M4 unit and PostgreSQL tests for success, cooldown, provider failure, oversized input, omission safety, monotonicity, concurrency, and privileged function access.
+- Zero-cost operating policy (`docs/COST_GUARDRAILS.md`) and ADR 0011, making €0/month a v0.1 architecture requirement.
+- `pnpm dev:local` convenience script for local port 3001 while retaining port 3000 for standard/CI development.
 
 ### Changed
 
-- TrophyBridge authentication routes now distinguish Supabase owner identity from verified PSN identity.
-- `psn_accounts` now stores `preferred_locale` and v0.1 enforces one connected PSN account per TrophyBridge owner.
-- The committed lockfile is refreshed for M3 dependencies and CI uses frozen dependency installation.
-- Supabase advisor findings for missing composite-FK indexes and per-row `auth.uid()` evaluation were resolved; intentional deny-by-default RLS notices remain informational.
-- M4 Library Sync is the next implementation milestone after live OAuth/PSN smoke activation.
+- `account_games` now stores `is_hidden` and `psn_last_updated_at` for lightweight library state.
+- Library snapshots never delete titles omitted by a later upstream response and do not regress known aggregate progress/trophy counts.
+- Dashboard status advances to M4; M5 Trophy Sync is the next implementation milestone.
+- Free-tier pressure must throttle/stop optional synchronization or serve last-good state rather than trigger a paid upgrade.
 
 ### Security
 
 - NPSSO and PSN access tokens are never persisted.
-- Refresh tokens are encrypted before persistence and are never exposed through public/private responses.
-- Supabase service-role and encryption keys remain server-only environment values.
-- Authentication/session responses are private and non-cacheable.
-- Browser roles have no privilege on `psn_credentials`.
-- CI remains fully offline with respect to PlayStation Network and uses fabricated credentials only.
+- Refresh tokens are encrypted before persistence and never exposed through responses.
+- Supabase privileged keys and encryption keys remain server-only environment values.
+- Browser roles have no privilege on `psn_credentials` or the M4 library persistence function.
+- Library error persistence uses safe bounded error codes/messages rather than raw provider exceptions.
+- CI never contacts PlayStation Network and uses fabricated identities/credentials only.
+
+### Cost controls
+
+- M4 uses manual synchronization only, with no cron/background polling or automatic retry loop.
+- PSN artwork remains referenced by upstream URL instead of mirrored into Supabase Storage.
+- Dashboard library reads are bounded, and concurrent sync work is single-flight per account.
+- The accepted hosted architecture is Supabase Free + public GitHub/standard Actions + future Vercel Hobby only.
 
 ## [0.1.0] - Unreleased
 
