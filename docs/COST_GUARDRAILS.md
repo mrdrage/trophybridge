@@ -6,114 +6,131 @@ Last verified: 2026-08-19.
 
 TrophyBridge has a hard operating-cost target of **€0/month** for the personal v0.1 deployment.
 
-This means more than choosing free plans. Application behavior must be designed so that normal use is bounded and, if a quota approaches exhaustion, TrophyBridge can throttle, refuse optional work, serve the last valid state, or temporarily stop rather than require a paid upgrade.
+This means more than choosing free plans. Application behavior must stay bounded and, if quota pressure appears, TrophyBridge must throttle, refuse optional work, serve last-good state, or temporarily stop rather than require a paid upgrade.
 
-Free-tier quotas can change over time, so this document is re-verified before production deployment and whenever a new hosted dependency is introduced.
+Free-tier quotas can change, so hosted-service limits are re-verified before production deployment and whenever a new dependency is introduced.
 
 ## Current services
 
 ### Supabase
 
-The connected TrophyBridge organization is on the Supabase **Free** plan. On 2026-08-19 the TrophyBridge database was healthy and approximately 11 MB before the first real PSN import.
+The connected TrophyBridge organization is on the Supabase **Free** plan. TrophyBridge uses PostgreSQL, Supabase Auth, and the Data API through server-side clients.
 
-TrophyBridge currently uses Supabase for:
-
-- PostgreSQL;
-- Supabase Auth;
-- the Data API through server-side clients.
-
-M4 does not use Supabase Storage for PlayStation artwork, does not use Edge Functions, and does not use paid database add-ons.
+M4/M5 do not require Supabase Storage for PlayStation artwork, Edge Functions, paid database add-ons, or background workers.
 
 ### GitHub
 
-The TrophyBridge repository is public. CI uses standard GitHub-hosted runners only. Larger runners are prohibited for the zero-cost deployment unless the product requirement is explicitly changed.
+The repository is public. CI uses standard GitHub-hosted runners only. Larger paid runners are outside the accepted v0.1 architecture.
 
 ### Vercel
 
-Production deployment is planned for Vercel **Hobby** only. No Pro plan, paid team features, paid add-ons, or paid observability products are part of the architecture.
-
-M4 does not require Vercel Cron. Library synchronization is an authenticated manual action.
+Deployment is planned for Vercel **Hobby** only. No Pro plan, paid add-on, or paid observability product is required by M0-M5.
 
 ### PlayStation integration
 
-TrophyBridge uses the pinned open-source `psn-api` adapter and does not depend on a paid PSN data broker.
+TrophyBridge uses pinned open-source `psn-api` and does not depend on a paid PSN data broker.
 
-## M4 application guardrails
-
-Library synchronization is deliberately bounded:
+## M4 library guardrails
 
 ```text
 Default minimum interval per account: 3600 seconds
 Maximum titles accepted per sync: 2000
 Stale-running-run recovery: 600 seconds
-Dashboard library rows per read: 12 by default, hard bounded to 50
+Dashboard library rows: 12 by default, hard bounded to 50
 Concurrent running library syncs per account: 1
+Trigger: authenticated manual action only
 ```
 
-The 2,000-title ceiling exists at both the TypeScript service layer and PostgreSQL persistence layer. An oversized response is rejected before library state is written.
+The 2,000-title ceiling exists in both TypeScript and PostgreSQL. An oversized response is rejected before library persistence.
 
-A successful library snapshot does not delete titles omitted by a later PSN response. This lets TrophyBridge serve last-good factual data instead of repeatedly performing expensive recovery imports.
+A successful snapshot does not delete titles omitted by a later response. This preserves last-good state and avoids costly recovery imports.
 
-No automatic retry loop exists. A provider error records a bounded failed sync run and returns control to the user.
+## M5 game-trophy guardrails
+
+```text
+Default minimum interval per account/game: 300 seconds
+Maximum trophy groups accepted per sync: 100
+Maximum title trophies accepted per sync: 1000
+Maximum user trophy states accepted per sync: 1000
+Stale-running-run recovery: 600 seconds
+Concurrent running game syncs per account/game: 1
+Trigger: authenticated manual action only
+```
+
+M5 is lazy by design. Synchronizing one title never deep-hydrates the other 195+ library titles.
+
+The TypeScript service validates exact group/trophy completeness before persistence. PostgreSQL repeats structural/size checks. Failed or inconsistent responses leave last-good rows intact instead of starting repair loops.
+
+No automatic retry loop exists. Errors produce one bounded failed `sync_run` and return control to the owner.
 
 ## Storage discipline
 
-M4 stores only compact factual metadata and counters needed by the product:
+TrophyBridge stores compact factual state needed for the product:
 
-- provider game identity;
-- title and platform metadata;
-- upstream icon URL;
-- aggregate progress and trophy counts;
-- hidden state;
-- provider/update synchronization timestamps.
+- provider IDs;
+- localized title/group/trophy text when available;
+- platform and upstream image URLs;
+- aggregate counters;
+- earned state/timestamps;
+- rarity/rate and honest numeric progress fields;
+- synchronization metadata.
 
-Images are **not copied into Supabase Storage**. This avoids unnecessary storage and bandwidth multiplication.
+PSN images are referenced by upstream URL and are **not mirrored** into Supabase Storage.
 
-M5 and later milestones must continue to prefer normalized text/numeric state over duplicating upstream binary assets.
+M5 adds text/numeric trophy rows only for games the owner explicitly selects. It does not bulk-fill the entire collection.
 
 ## Network discipline
 
-Normal reads come from PostgreSQL. They must not call PSN merely because a dashboard or future public endpoint is opened.
+Normal dashboard reads come from PostgreSQL. Opening the library or a game page does not contact PSN.
 
-Refreshes must be explicit or bounded by server-side freshness/cooldown rules. Public clients must never be able to trigger unbounded upstream synchronization.
+Current upstream calls happen only after an explicit authenticated sync action and are constrained by server-side cooldown/concurrency/size limits.
 
-Scheduled polling is not allowed unless a later design proves it can remain inside the zero-cost envelope with a hard application-level cap.
+Scheduled polling is not allowed unless a later design proves it can remain inside the zero-cost envelope with hard application caps.
 
 ## Paid-service rule
 
-Before adding a new external service, the implementation must answer all of the following:
+Before adding any new external service, the design must answer:
 
-1. Is there a genuinely usable free tier, not only a temporary trial?
-2. Can TrophyBridge function without enabling automatic paid overages?
-3. What application-level hard limit protects the quota?
+1. Is there a genuinely usable free tier rather than a temporary trial?
+2. Can TrophyBridge function without automatic paid overages?
+3. What hard application limit protects the quota?
 4. What happens when the limit is reached?
-5. Can the system continue serving last-good factual data or degrade safely?
+5. Can last-good factual state continue to be served?
 
-If these conditions cannot be met, the service is not accepted for v0.1.
+If these conditions cannot be met, the dependency is not accepted for v0.1.
 
 ## Quota pressure behavior
 
-If usage grows unexpectedly, the preferred response order is:
+Preferred response order:
 
 ```text
 reduce refresh frequency
--> bound/paginate reads more aggressively
--> disable optional background work
--> serve cached/last-good factual state
+-> tighten per-request bounds
+-> disable optional work
+-> serve durable last-good state
 -> temporarily refuse new sync work
 -> redesign the feature
 ```
 
 Upgrading to a paid tier is **not** an automatic fallback.
 
+## Production checkpoint
+
+The first live M4 sync imported 196 games successfully while remaining well inside the current database envelope.
+
+The M5 production schema adds no paid dependency or binary storage. Before the first live deep trophy import, the detailed tables are intentionally empty because M5 only hydrates selected games.
+
+Supabase post-M5 performance advisories contain only unused-index informational notices. Security advisories include expected RLS-without-policy informational notices on intentionally server-only tables and a separate Auth warning about leaked-password protection; the current TrophyBridge login path uses GitHub OAuth, so that warning is not caused by M5.
+
 ## Verification cadence
 
 Re-check the operating envelope:
 
-- before the first Vercel production deployment;
-- before adding a new hosted service;
+- before the first Vercel deployment;
+- before adding a hosted service;
 - before enabling cron/background jobs;
-- after material changes to Supabase/Vercel/GitHub free-plan rules;
+- after material free-plan changes;
+- when public refresh behavior is designed;
 - during M10 hardening.
 
-The repository documentation must record any change that could create a recurring cost.
+The repository documentation must record any change that could create recurring cost.

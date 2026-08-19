@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { z } from "zod";
 
 import { getAuthenticatedUser } from "@/lib/auth/require-user";
 import { createPsnAuthRepository } from "@/lib/psn/runtime";
@@ -8,6 +9,8 @@ import { createTrophyRepository } from "@/lib/trophies/runtime";
 import { TrophySyncButton } from "./trophy-sync-button";
 
 export const dynamic = "force-dynamic";
+
+const gameIdSchema = z.string().uuid();
 
 function formatDate(value: string | null): string {
   if (!value) return "Mai";
@@ -28,8 +31,11 @@ export default async function GameTrophyPage({
   const account = await createPsnAuthRepository().getAccountForOwner(user.id);
   if (!account) redirect("/dashboard");
 
-  const { gameId } = await params;
-  const detail = await createTrophyRepository().getGameDetail(account.id, gameId);
+  const { gameId: rawGameId } = await params;
+  const parsedGameId = gameIdSchema.safeParse(rawGameId);
+  if (!parsedGameId.success) notFound();
+
+  const detail = await createTrophyRepository().getGameDetail(account.id, parsedGameId.data);
   if (!detail) notFound();
 
   return (

@@ -1,161 +1,197 @@
 # TrophyBridge Architecture
 
-## Purpose
+## System intent
 
-TrophyBridge owns factual PlayStation trophy state. It answers what is true about a player's games and trophies; AI strategy is a separate consumer layer.
-
-## High-level system
+TrophyBridge separates PlayStation-facing integration, factual persistence, private owner controls, and future public AI consumption so that unstable/community-documented PSN behavior does not leak through the product contract.
 
 ```text
-                 GitHub OAuth
-                      |
-                      v
-                Supabase Auth
-                      |
-                      v
-             Authenticated user
-                      |
-                      v
-               Private routes
-                      |
-              PSN auth lifecycle
-                      |
-                      v
-PlayStation Network -> PsnApiProvider -> PsnProvider
-                                      |
-                                      v
-                               TrophyBridge Core
-                                      |
-                                      v
-                                 PostgreSQL
-                                /          \
-                          Private UI      Public API
-                                             |
-                                             v
-                                           AI client
+PlayStation Network
+        |
+        v
+    psn-api 2.18.1
+        |
+        v
+   PsnApiProvider
+        |
+        v
+     PsnProvider
+        |
+        +------------------+
+        |                  |
+        v                  v
+ Authentication       Sync services
+        |             /           \
+        v            v             v
+ encrypted       M4 library     M5 one-game
+ credential       snapshot       trophy snapshot
+                         \         /
+                          v       v
+                         PostgreSQL
+                         /        \
+                        v          v
+                Private dashboard  Future public API
+                                         |
+                                         v
+                                         AI
 ```
 
-## Authentication boundary
+## Trust boundaries
 
-M3 establishes two separate identities:
+### Owner authentication
 
-- TrophyBridge owner identity: Supabase Auth user ID.
-- PlayStation identity: verified PSN `accountId` + Online ID.
+GitHub OAuth through Supabase Auth identifies the TrophyBridge owner. This identity is distinct from the connected PlayStation identity.
 
-The mapping is stored in `psn_accounts.owner_user_id`. A PSN account may not be silently linked to a different TrophyBridge owner, and v0.1 supports one PSN connection per owner.
+### PlayStation authentication
 
-GitHub OAuth and SSR cookies establish the TrophyBridge session. PSN uses a separate server-only token lifecycle.
+NPSSO is accepted only in a private server path as bootstrap material. It is exchanged for PlayStation tokens and discarded.
 
-## PSN credential boundary
+The initial connection resolves the claimed Online ID. Exact Universal Search is preferred; when Sony omits a valid owner profile, `getProfileFromUserName` may supply the stable account ID. The final authority is always `getProfileFromAccountId` using the same authenticated PlayStation token, requiring `isMe=true` and the exact Online ID.
 
-NPSSO exists only during initial connection. The durable refresh token is AES-256-GCM encrypted in `psn_credentials`; access tokens exist only in runtime memory. Key versions allow rotation.
+Only an encrypted refresh token is durable. Access tokens are runtime-only.
 
-`PsnConnectionService` owns connection, refresh, reauthentication state, disconnect, and provider construction. Synchronization code must ask it for a `PsnApiProvider` rather than touching credential persistence.
+### Synchronization authorization boundary
+
+All current PSN sync operations obtain a provider through:
+
+```text
+PsnConnectionService.createProviderForOwner(ownerUserId)
+```
+
+Library/trophy services must not decrypt refresh credentials themselves.
 
 ## Provider boundary
 
-`PsnApiProvider` normalizes external `psn-api` data before persistence. Provider-specific names do not leak into sync/database/public API layers.
-
-The saved account locale is passed to the provider. The pilot/default locale is `it-IT`.
-
-## Persistence boundary
-
-Core factual tables:
+Application code consumes the internal `PsnProvider` contract:
 
 ```text
-psn_accounts
-games
-account_games
-trophy_groups
-trophies
-player_trophies
-sync_runs
-progress_events
-share_links
-sync_targets
-psn_credentials
+getAccount()
+getGames()
+getTrophyGroups(game)
+getTrophies(game)
+getUserTrophies(game)
 ```
 
-PostgreSQL protects uniqueness, relational integrity, one base trophy group per title, progress ranges, event deduplication, monotonic earned state, and the one-running-library-sync invariant.
+`PsnApiProvider` hides raw `psn-api` payload shapes, pagination, platform normalization, service-name propagation, locale headers, and stable provider errors.
 
-M4 extends `account_games` with provider hidden state and provider last-update time. Its `persist_library_snapshot` function accepts only provider-normalized data and is executable only by the server role.
+`PSN_TROPHY_LOCALE=it-IT` is persisted/configured for the pilot so metadata requests align with the language used in-game when PSN provides that localization.
 
-## RLS boundary
-
-All public-schema application tables use RLS. Authenticated users may read only their own non-secret `psn_accounts` metadata. `psn_credentials` has no browser privileges or policies. Server mutations use the privileged server client.
-
-The M4 persistence function is explicitly revoked from `public`, `anon`, and `authenticated` roles.
-
-## M4 synchronization model
-
-M4 performs the first real factual data synchronization:
+## M4 lightweight library path
 
 ```text
-owner session
+owner action
+  -> POST /api/private/v1/library/sync
   -> LibrarySyncService
-  -> PsnConnectionService.createProviderForOwner(ownerUserId)
-  -> provider.getGames()
-  -> bounded atomic library snapshot
+  -> authenticated PsnProvider
+  -> getGames()
+  -> bounded validation
+  -> persist_library_snapshot()
   -> games + account_games + sync_runs
 ```
 
-The library layer is deliberately lightweight. It imports title identity, title/platform/icon metadata, hidden state, aggregate progress/counts, and synchronization timestamps. Detailed group/trophy/player hydration remains M5.
+M4 deliberately avoids trophy details. This makes the initial 196-title real library import cheap and bounded.
 
-A failed PSN refresh or library read must not delete factual data. A later provider response that omits a previously known title also does not delete it. Aggregate progress and trophy counters use monotonic persistence so a partial/regressive upstream response cannot silently erase known progress.
+The dashboard overview sorts by provider `psn_last_updated_at` first. Local `last_seen_at` is only a secondary ordering key because all titles in an initial full import can share the same local timestamp.
 
-Only one library synchronization can run per account. Old abandoned running records can be marked failed before a new attempt starts.
-
-## Zero-cost boundary
-
-The v0.1 operating target is €0/month. This is enforced in code as well as service selection.
-
-M4 defaults:
+## M5 lazy trophy path
 
 ```text
-manual sync only
-successful sync cooldown: 3600 seconds
-maximum titles accepted: 2000
-stale run recovery: 600 seconds
-recent dashboard rows: 12, bounded to 50
+owner selects one account_game
+  -> POST /api/private/v1/games/{gameId}/sync
+  -> TrophySyncService
+  -> verify game belongs to account
+  -> per-game cooldown/concurrency gate
+  -> authenticated PsnProvider
+  -> getTrophyGroups(game)
+  -> getTrophies(game)
+  -> getUserTrophies(game)
+  -> complete-snapshot validation
+  -> persist_game_trophy_snapshot()
+  -> trophy_groups + trophies + player_trophies
+  -> game sync run + sync target
+  -> private game detail
 ```
 
-No cron/background library polling, binary image mirroring, or automatic retry loop is used. Normal dashboard/public reads must come from PostgreSQL rather than contact PSN.
+M5 never deep-hydrates the entire library. The owner explicitly chooses the title whose trophies should be refreshed.
 
-If quota pressure occurs, TrophyBridge should throttle or stop optional synchronization and keep serving last-good state before any paid upgrade is considered. See `docs/COST_GUARDRAILS.md` and ADR 0011.
+## Snapshot validation strategy
+
+TrophyBridge treats an upstream deep response as one factual snapshot, not three independent writes. Before any persistence, the service verifies identities, group membership, exact trophy-type counts per group, and a one-to-one title/user trophy set.
+
+This is important because a successful HTTP response can still be incomplete. A partial trophy payload must not overwrite last-good factual state.
+
+The PostgreSQL function repeats structural/size/identity checks as defense in depth and performs the write atomically.
+
+## Base versus additional groups
+
+PSN `groupId=default` is the structural base-game group. M5 requires exactly one such base group.
+
+Numbered groups are normalized as additional (`dlc` internally for the current provider mapper). Platinum status is calculated only from base-group trophies. Additional-group completion is tracked separately.
+
+## Monotonic state
+
+Persistence favors factual safety over mirroring transient upstream regressions:
+
+- earned trophies never revert to unearned;
+- earliest known earned timestamp is retained;
+- known localized trophy metadata is not erased by later null values;
+- failed or rejected snapshots do not delete last-good trophy rows;
+- M4 aggregate library state also does not regress.
+
+M6 will build event detection on top of these durable transitions.
+
+## Private dashboard
+
+The dashboard is intentionally lean.
+
+- M4 list: recent library titles, aggregate PSN progress, manual library sync.
+- M5 game page: manual deep sync, base/additional progress summary, trophy list and earned state.
+
+Opening dashboard pages reads PostgreSQL only. It does not automatically contact PSN.
 
 ## Public API boundary
 
-The future public API is read-only, versioned, revocable, and capability-token gated. It never has access to PSN or Supabase authentication material.
+M7/M8 will expose capability-token read-only routes. Public clients will never receive authentication material or direct access to server-side persistence functions.
 
-The future freshness path must remain bounded so a public client cannot create unbounded upstream or hosting usage.
+Normal public reads will use durable PostgreSQL state. Any future `fresh=1` behavior must reuse bounded per-game synchronization and single-flight/cooldown state rather than permit arbitrary PSN fan-out.
 
-## Current CI architecture
+Unearned hidden trophy metadata must be masked at the future public serialization boundary unless explicit policy allows spoilers.
+
+## Zero-cost architecture
+
+The v0.1 deployment requirement is €0/month.
+
+Current hosted plan:
 
 ```text
-Application quality
-  frozen install -> lint -> typecheck -> Vitest -> production build
-
-Database integrity
-  PostgreSQL 17 -> auth bootstrap -> all migrations -> SQL invariant suites
-
-Browser smoke
-  Playwright Chromium
+Supabase Free
+public GitHub + standard GitHub Actions
+Vercel Hobby planned
 ```
 
-All CI PSN identities and credentials are fabricated. No workflow makes a live PSN request. The public repository uses standard GitHub-hosted runners only.
+M4 and M5 enforce this in application behavior:
 
-## Milestones
+```text
+library: manual, >=3600s cooldown, <=2000 titles, 1 running/account
+game trophies: manual, >=300s cooldown, <=100 groups, <=1000 trophies, 1 running/account+game
+```
 
-- ✅ M0 Foundation
-- ✅ M1 Domain Model
-- ✅ M2 PSN Provider
-- ✅ M3 Authentication
-- ✅ M4 Library Sync
-- M5 Trophy Sync
-- M6 Progress Events
-- M7 Public Share
-- M8 AI Context
-- M9 Dashboard
-- M10 Hardening
+No cron, full-library trophy crawl, automatic retry loop, mirrored PSN artwork, Redis, VPS, or paid worker is part of the current architecture.
 
-The first live owner PSN smoke is an operational validation step. It must be completed through the private dashboard before claiming real PSN data has been imported; it is not replaced by fixture-based CI.
+## Failure behavior
+
+Provider failure or invalid snapshot:
+
+```text
+record safe failed sync metadata
+keep last-good factual rows
+return normalized error
+allow later manual retry after applicable guards
+```
+
+Only the absence of any prior factual state can leave a game without detailed trophy rows. Opening the game page still succeeds and invites the owner to perform the first explicit M5 sync.
+
+## Milestone boundary
+
+M5 ends with durable one-game trophy metadata/player state and base/additional separation.
+
+M6 adds newly-earned event detection. It should compare durable pre/post state without weakening M5 monotonicity or turning the sync path into background polling.
