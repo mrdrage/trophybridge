@@ -7,6 +7,7 @@ import type {
   GameTrophyDetail,
   GameTrophySnapshot,
   PersistGameSnapshotResult,
+  ProgressEventView,
   TrophyGroupView,
   TrophyRepository,
   TrophyView,
@@ -58,6 +59,11 @@ function trophyType(value: unknown): "bronze" | "silver" | "gold" | "platinum" {
   if (value === "bronze" || value === "silver" || value === "gold" || value === "platinum") {
     return value;
   }
+  storageFailure();
+}
+
+function progressEventType(value: unknown): "trophy_earned" | "platinum_earned" {
+  if (value === "trophy_earned" || value === "platinum_earned") return value;
   storageFailure();
 }
 
@@ -175,6 +181,7 @@ export class SupabaseTrophyRepository implements TrophyRepository {
     status: "success" | "failed";
     finishedAt: string;
     trophiesProcessed: number;
+    newTrophiesFound?: number;
     errorCode?: string | null;
     errorMessage?: string | null;
   }): Promise<void> {
@@ -185,6 +192,7 @@ export class SupabaseTrophyRepository implements TrophyRepository {
         finished_at: input.finishedAt,
         games_processed: input.status === "success" ? 1 : 0,
         trophies_processed: input.trophiesProcessed,
+        new_trophies_found: input.newTrophiesFound ?? 0,
         error_code: input.errorCode ?? null,
         error_message: input.errorMessage ?? null,
       })
@@ -196,13 +204,15 @@ export class SupabaseTrophyRepository implements TrophyRepository {
   async persistGameSnapshot(
     psnAccountId: string,
     gameId: string,
+    runId: string,
     snapshot: GameTrophySnapshot,
     seenAt: string,
     nextAllowedAt: string,
   ): Promise<PersistGameSnapshotResult> {
-    const { data, error } = await this.client.rpc("persist_game_trophy_snapshot", {
+    const { data, error } = await this.client.rpc("persist_game_trophy_snapshot_with_events", {
       p_psn_account_id: psnAccountId,
       p_game_id: gameId,
+      p_sync_run_id: runId,
       p_groups: snapshot.groups,
       p_trophies: snapshot.trophies,
       p_user_trophies: snapshot.userTrophies,
@@ -222,6 +232,7 @@ export class SupabaseTrophyRepository implements TrophyRepository {
       baseEarnedCount: numberValue(result.base_earned_count),
       additionalTrophyCount: numberValue(result.additional_trophy_count),
       additionalEarnedCount: numberValue(result.additional_earned_count),
+      newTrophiesFound: numberValue(result.new_trophies_found),
     };
   }
 
@@ -342,6 +353,40 @@ export class SupabaseTrophyRepository implements TrophyRepository {
       return left.groupId.localeCompare(right.groupId);
     });
 
+    const trophyById = new Map(trophies.map((trophy) => [trophy.id, trophy]));
+    const { data: eventData, error: eventError } = await this.client
+      .from("progress_events")
+      .select("id,event_type,occurred_at,detected_at,trophy_id")
+      .eq("psn_account_id", psnAccountId)
+      .eq("game_id", gameId)
+      .in("event_type", ["trophy_earned", "platinum_earned"])
+      .order("detected_at", { ascending: false })
+      .limit(20);
+    if (eventError) storageFailure();
+
+    const recentEvents: ProgressEventView[] = [];
+    for (const row of (Array.isArray(eventData) ? eventData : []) as Record<string, unknown>[]) {
+      const id = stringValue(row.id);
+      const trophyId = stringValue(row.trophy_id);
+      const occurredAt = stringValue(row.occurred_at);
+      const detectedAt = stringValue(row.detected_at);
+      if (!id || !trophyId || !occurredAt || !detectedAt) storageFailure();
+      const trophy = trophyById.get(trophyId);
+      if (!trophy) storageFailure();
+      recentEvents.push({
+        id,
+        eventType: progressEventType(row.event_type),
+        occurredAt,
+        detectedAt,
+        trophyId,
+        psnTrophyId: trophy.psnTrophyId,
+        trophyName: trophy.name,
+        trophyType: trophy.type,
+        groupId: trophy.groupId,
+        groupKind: trophy.groupKind,
+      });
+    }
+
     const baseTrophies = trophies.filter((trophy) => trophy.groupKind === "base");
     const additionalTrophies = trophies.filter((trophy) => trophy.groupKind !== "base");
     const latestRun = await this.getLatestSuccessfulGameRun(psnAccountId, gameId);
@@ -367,6 +412,7 @@ export class SupabaseTrophyRepository implements TrophyRepository {
       },
       groups,
       trophies,
+      recentEvents,
     };
   }
 }
