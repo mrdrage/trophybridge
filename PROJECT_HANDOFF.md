@@ -4,7 +4,7 @@ Last updated: 2026-08-19
 
 ## Mission
 
-TrophyBridge is a privacy-first bridge between a PlayStation account and AI-assisted platinum tracking. It synchronizes factual trophy state, keeps base-game trophies separate from additional groups, and will expose a stable read-only public API that a fresh AI conversation can inspect without screenshots or manual trophy lists.
+TrophyBridge is a privacy-first bridge between a PlayStation account and AI-assisted platinum tracking. It synchronizes factual trophy state, keeps base-game trophies separate from additional groups, records newly observed trophy progress, and will expose a stable read-only public API that a fresh AI conversation can inspect without screenshots or manual trophy lists.
 
 Pilot account: `mrdrage2`.
 Pilot game: Final Fantasy XVI on PS5.
@@ -38,8 +38,8 @@ TypeScript, Next.js App Router, Node 24, pnpm 11.20.0, PostgreSQL/Supabase, Supa
 - ✅ M2 PSN Provider
 - ✅ M3 Authentication implementation/schema and live owner connection
 - ✅ M4 Library Sync implementation/schema and live 196-title smoke
-- ✅ M5 Trophy Sync implementation/schema; live FF16 deep-sync smoke is the immediate operational validation
-- M6 Progress Events
+- ✅ M5 Trophy Sync implementation/schema and live Final Fantasy XVI baseline smoke
+- ✅ M6 Progress Events implementation; production rollout and first real post-baseline trophy delta are the remaining operational checks
 - M7 Public Share
 - M8 AI Context
 - M9 Dashboard
@@ -53,14 +53,16 @@ The real owner flow has been validated.
 - PSN Online ID `mrdrage2` is connected.
 - Universal Search can omit this valid account, so the authentication client first tries exact Universal Search and then falls back to `getProfileFromUserName` when necessary.
 - The fallback never establishes identity by itself. TrophyBridge always finishes with `getProfileFromAccountId`, requiring `isMe=true` and the exact claimed Online ID.
-- NPSSO is never persisted.
+- NPSSO is bootstrap-only and is never persisted.
 - PSN access tokens are never persisted.
 - The durable refresh token is encrypted with AES-256-GCM in server-only `psn_credentials`.
-- `PsnConnectionService.createProviderForOwner(ownerUserId)` is the only allowed synchronization boundary for obtaining an authenticated provider.
+- PSN token responses include their refresh-token expiry and TrophyBridge persists the calculated `refresh_token_expires_at` metadata.
+- `PsnConnectionService.createProviderForOwner(ownerUserId)` is the only allowed synchronization boundary for obtaining an authenticated provider. It refreshes the short-lived PSN access token with the encrypted refresh token and stores a rotated refresh token when PSN returns one.
+- If the durable refresh credential becomes invalid/expired, the account moves to `reauth_required`; a new NPSSO must then be supplied through the private dashboard and is discarded again after bootstrap.
+
+Never paste NPSSO, OAuth client secrets, Supabase secret/service-role keys, refresh/access tokens, or the TrophyBridge encryption key into chat, GitHub, logs, screenshots, or documentation.
 
 ## M4 live validation
-
-The M4 end-to-end smoke is complete.
 
 Real production result on 2026-08-19:
 
@@ -71,68 +73,85 @@ games stored: 196
 account_games stored: 196
 ```
 
-The imported data includes `FINAL FANTASY XVI` on PS5 at 19% aggregate PSN library progress, with the latest provider update timestamp at the time of the smoke.
+Final Fantasy XVI is present on PS5. Dashboard ordering uses `psn_last_updated_at` before local `last_seen_at`.
 
-A dashboard bug initially showed old PS3 titles because every first-import row had the same local `last_seen_at`. PR #7 corrected the overview to order first by `psn_last_updated_at` descending and only then by local `last_seen_at`.
+M4 persistence is conservative: omitted titles are not deleted, aggregate counters/progress do not regress, and only one library run can be active per account.
 
-M4 persistence remains conservative: omitted titles are not deleted, aggregate counters/progress do not regress, and only one library run can be active per account.
+## M5 live validation
 
-## M5 Trophy Sync
+The real Final Fantasy XVI deep-trophy smoke succeeded on 2026-08-19.
 
-M5 is implemented on the private, lazy single-game path.
+Current baseline at that checkpoint:
 
-Key components:
+```text
+FINAL FANTASY XVI game_id: 0e4a06e6-97f4-4115-bed0-0429dbcf9e7a
+library progress: 19%
+trophy groups: 3
+trophies: 69
+player trophy rows: 69
+earned trophies: 17
+successful game sync runs: 1
+progress_events: 0
+```
+
+This is the durable baseline M6 compares against. The empty event table is intentional and must not be backfilled with the 17 trophies already earned before M6 observation began.
+
+M5 validation requires unique identities, exactly one `default` base group, exact group bronze/silver/gold/platinum counts, complete title/user trophy identity coverage, matching trophy types, and bounded response sizes. Failed or incomplete snapshots preserve last-good state.
+
+## M6 Progress Events
+
+M6 extends the existing manual one-game trophy sync without introducing a second PSN synchronization path.
+
+Key implementation:
 
 ```text
 lib/trophies/types.ts
-lib/trophies/errors.ts
 lib/trophies/service.ts
 lib/trophies/repository.ts
-lib/trophies/runtime.ts
-lib/api/trophy-response.ts
-app/api/private/v1/games/[gameId]/sync/route.ts
 app/dashboard/games/[gameId]/page.tsx
 app/dashboard/games/[gameId]/trophy-sync-button.tsx
-supabase/migrations/20260819193000_m5_trophy_sync.sql
+supabase/migrations/20260819225000_m6_progress_events.sql
 tests/unit/trophy-sync-service.test.ts
-tests/integration/domain_trophy_sync.sql
+tests/integration/domain_progress_events.sql
+docs/decisions/0013-baseline-aware-progress-events.md
 ```
 
 Flow:
 
 ```text
 Authenticated owner
-  -> select one existing account_game
   -> POST /api/private/v1/games/{gameId}/sync
-  -> TrophySyncService
-  -> PsnConnectionService.createProviderForOwner(ownerUserId)
-  -> PsnProvider.getTrophyGroups()
-  -> PsnProvider.getTrophies()
-  -> PsnProvider.getUserTrophies()
-  -> strict complete-snapshot validation
-  -> persist_game_trophy_snapshot(...)
-  -> trophy_groups + trophies + player_trophies
-  -> sync_runs + sync_targets
-  -> private game detail
+  -> existing M5 complete snapshot validation
+  -> active game sync run
+  -> persist_game_trophy_snapshot_with_events(...)
+       -> inspect durable pre-sync player_trophies
+       -> capture earned=false -> incoming earned=true transitions
+       -> delegate to M5 persist_game_trophy_snapshot(...)
+       -> insert deduplicated progress_events
+  -> sync_runs.new_trophies_found
+  -> private recent-activity view
 ```
 
-Validation before persistence requires:
+Event semantics:
 
-- at most 100 groups and 1,000 trophies/user states;
-- unique group IDs;
-- unique title trophy IDs;
-- unique user trophy IDs;
-- exactly one base group and it must be PSN group `default`;
-- every title trophy belongs to a returned group;
-- actual bronze/silver/gold/platinum counts for every group exactly match the provider's `definedTrophies` totals;
-- title and user trophy arrays have the same complete identity set;
-- user trophy type agrees with title metadata.
+```text
+first deep sync                    -> factual baseline, no historical events
+later normal false -> true         -> trophy_earned
+later platinum false -> true       -> trophy_earned + platinum_earned
+replay of same earned state        -> no duplicate event
+```
 
-If validation or PSN fails, the old factual state remains untouched. The database function is atomic and server-role-only. Earned state cannot regress; known localized metadata is preserved if a later provider response has a null field.
+`occurred_at` uses PSN `earnedDateTime` when present; otherwise it uses the sync timestamp. `detected_at` is the sync timestamp. Events are tied to the detecting `sync_run_id`.
 
-Base and additional groups are structurally separate. The private detail exposes base trophy count/earned count and base platinum status separately from additional-group progress. M5 does not generate progress events; that belongs to M6.
+`new_trophies_found` counts newly earned trophies rather than event rows, so a platinum transition counts as one new trophy even though it also gets a dedicated platinum event.
 
-## M5 zero-cost guardrails
+The M6 wrapper and delegated M5 factual persistence share one PostgreSQL transaction. A failure rolls back state and events together.
+
+The private game page shows at most 20 recent events and opening the page never contacts PSN.
+
+## M6 zero-cost guardrails
+
+M6 reuses all M5 limits:
 
 ```text
 GAME_SYNC_MIN_INTERVAL_SECONDS=300
@@ -141,15 +160,16 @@ GAME_SYNC_MAX_TROPHIES=1000
 GAME_SYNC_STALE_AFTER_SECONDS=600
 one running game sync per account/game
 manual game sync only
+recent private progress events <=20
 ```
 
-No library-wide trophy hydration, cron, background polling, automatic retry loop, image mirroring, or new paid dependency was added.
+No queue, cron, polling worker, external event service, image mirroring, or new paid dependency was added. Detection piggybacks on the existing game sync.
 
-## Production Supabase state
+## Production Supabase state before M6 rollout
 
 Project ref: `aecehligohfsjqbgoeeo`, region `eu-west-3`.
 
-Applied production migrations:
+Applied production migrations before M6:
 
 ```text
 20260819123205 m1_domain_model
@@ -160,40 +180,44 @@ Applied production migrations:
 20260819192017 m5_trophy_sync
 ```
 
-Post-M5 verification:
+M6 migration to apply after final CI:
 
 ```text
-persist_game_trophy_snapshot exists: yes
-one-running-game-sync index exists: yes
-authenticated can execute deep persistence: no
-service_role can execute deep persistence: yes
-games/account_games preserved after migration: 196 / 196
-trophy_groups/trophies/player_trophies before first M5 live smoke: 0 / 0 / 0
+m6_progress_events
 ```
 
-Security advisor status after M5 contains the expected informational RLS-without-policy notices for intentionally server-only/deny-by-default tables. A separate Supabase Auth warning says leaked-password protection is disabled; TrophyBridge currently uses GitHub OAuth rather than password sign-in, so this is not an M5 regression and can be revisited during hardening. Performance notices are unused-index informational findings expected before real deep-trophy traffic.
+Post-rollout verification must confirm:
 
-Never paste NPSSO, OAuth client secrets, Supabase secret/service-role keys, refresh/access tokens, or the TrophyBridge encryption key into chat, GitHub, logs, screenshots, or documentation.
+```text
+M6 RPC exists
+authenticated cannot execute it
+service_role can execute it
+196 games/account_games remain intact
+FF16 remains 3 groups / 69 trophies / 69 player rows / 17 earned before a new trophy
+progress_events remains 0 immediately after migration
+```
 
-## Immediate next operational step
+## Immediate operational validation after M6 rollout
 
-Update the owner's local `main`, open Final Fantasy XVI from the dashboard, and press `Sincronizza trofei` exactly once. Then verify production rows:
+There is no need to manufacture a historical event. The first real M6 end-to-end validation happens after the owner earns another trophy in Final Fantasy XVI.
 
-- one `default` base group;
-- additional groups separately classified;
-- trophy metadata in `it-IT` when PSN supplies localization;
-- player earned states and earned timestamps;
-- base platinum progress excludes additional groups;
-- successful `game` sync run and per-game cooldown;
-- `progress_events` remains empty because event generation is M6.
+Then:
 
-Fixture CI does not replace this live PSN smoke. After this validation, proceed to M6.
+1. let PlayStation synchronize the new trophy;
+2. wait until the 300-second TrophyBridge per-game cooldown permits a refresh;
+3. press `Sincronizza trofei` once on the FF16 game page;
+4. expect `newTrophiesFound` to be at least 1 and the UI to report the newly detected trophy;
+5. verify one `trophy_earned` row with the PSN earned timestamp when available;
+6. if the new trophy is platinum, also verify the dedicated `platinum_earned` row;
+7. re-run the same sync later and confirm it does not duplicate the event.
+
+A library re-sync is not required merely to detect a new trophy for an already known game.
 
 ## Public API plan
 
 Version prefix: `/api/public/v1`.
 
-Planned:
+Planned M7/M8 routes:
 
 ```text
 /share/{token}
@@ -202,6 +226,8 @@ Planned:
 /share/{token}/games/{gameId}/trophies
 /share/{token}/games/{gameId}/ai-context
 ```
+
+M6 `progress_events` are the intended durable source for M8 `recent_activity`.
 
 Normal public reads must use durable database state. Any future refresh path must reuse the bounded per-game synchronization boundary rather than permit unbounded PSN calls.
 
