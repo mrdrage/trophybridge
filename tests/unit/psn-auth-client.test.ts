@@ -27,6 +27,9 @@ function calls(overrides: Partial<PsnAuthCalls> = {}): PsnAuthCalls {
         },
       ],
     }),
+    getProfileFromUserName: async () => ({
+      profile: { accountId: "123456789", onlineId: "mrdrage2" },
+    }),
     getProfileFromAccountId: async () => ({ onlineId: "mrdrage2", isMe: true }),
     ...overrides,
   };
@@ -43,6 +46,18 @@ describe("PsnAuthClient", () => {
     expect(result.refreshToken).toBe("refresh-token");
   });
 
+  it("falls back to direct username lookup when PSN search omits the owner profile", async () => {
+    const client = new PsnAuthClient(
+      calls({
+        makeUniversalSearch: async () => ({ domainResponses: [{ results: [] }] }),
+      }),
+    );
+
+    const result = await client.connectWithNpsso("n".repeat(64), "mrdrage2");
+
+    expect(result.account).toEqual({ accountId: "123456789", onlineId: "mrdrage2" });
+  });
+
   it("rejects a token belonging to another PSN identity", async () => {
     const client = new PsnAuthClient(
       calls({ getProfileFromAccountId: async () => ({ onlineId: "mrdrage2", isMe: false }) }),
@@ -55,7 +70,7 @@ describe("PsnAuthClient", () => {
 
   it("normalizes invalid NPSSO bootstrap failures", async () => {
     const client = new PsnAuthClient(
-      calls({ exchangeNpssoForAccessCode: async () => { throw new Error("secret-bearing upstream message"); } }),
+      calls({ exchangeNpssoForAccessCode: async () => { throw new Error("redacted upstream failure"); } }),
     );
 
     await expect(client.connectWithNpsso("n".repeat(64), "mrdrage2")).rejects.toMatchObject({
