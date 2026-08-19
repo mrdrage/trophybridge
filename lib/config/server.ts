@@ -4,6 +4,21 @@ function requireValue(name: string, value: string | undefined): string {
   return normalized;
 }
 
+function boundedInteger(
+  name: string,
+  rawValue: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (rawValue == null || rawValue.trim() === "") return fallback;
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
 export function getSupabasePublicConfig(env: NodeJS.ProcessEnv = process.env) {
   return {
     url: requireValue("NEXT_PUBLIC_SUPABASE_URL", env.NEXT_PUBLIC_SUPABASE_URL),
@@ -39,4 +54,30 @@ export function getPsnTrophyLocale(env: NodeJS.ProcessEnv = process.env): string
     throw new Error("PSN_TROPHY_LOCALE must use a language-region value such as it-IT");
   }
   return locale;
+}
+
+export function getLibrarySyncPolicy(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    minIntervalSeconds: boundedInteger(
+      "LIBRARY_SYNC_MIN_INTERVAL_SECONDS",
+      env.LIBRARY_SYNC_MIN_INTERVAL_SECONDS,
+      3600,
+      60,
+      86_400,
+    ),
+    maxGamesPerSync: boundedInteger(
+      "LIBRARY_SYNC_MAX_GAMES",
+      env.LIBRARY_SYNC_MAX_GAMES,
+      2000,
+      1,
+      2000,
+    ),
+    staleRunAfterSeconds: boundedInteger(
+      "LIBRARY_SYNC_STALE_AFTER_SECONDS",
+      env.LIBRARY_SYNC_STALE_AFTER_SECONDS,
+      600,
+      60,
+      3600,
+    ),
+  };
 }
