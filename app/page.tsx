@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const principles = [
   "Privacy-first by design",
   "Base game and additional groups kept separate",
@@ -16,7 +18,10 @@ export default function HomePage() {
           un&apos;API pubblica revocabile affinché un assistente AI possa capire e, quando
           serve, aggiornare in modo controllato il percorso verso il Platino.
         </p>
-        <div className="status">M8 · AI Context complete</div>
+        <div className="actions">
+          <Link className="button primary" href="/dashboard">Apri dashboard</Link>
+          <span className="status">M9 · Dashboard</span>
+        </div>
       </section>
 
       <section className="principles" aria-label="Project principles">
