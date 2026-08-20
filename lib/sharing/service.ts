@@ -2,7 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { PsnAccountRecord } from "../psn/auth-repository";
 import { PsnConnectionError } from "../psn/connection-errors";
-import type { TrophyRepository, TrophyView } from "../trophies/types";
+import { PsnProviderError } from "../psn/errors";
+import { TrophySyncError } from "../trophies/errors";
+import type {
+  GameSyncSummary,
+  GameTrophyDetail,
+  TrophyRepository,
+  TrophyView,
+} from "../trophies/types";
 import { ShareError } from "./errors";
 import type {
   OwnerShareStatus,
@@ -16,9 +23,40 @@ import type {
 import { toPublicTrophy } from "./types";
 
 const SHARE_TOKEN_PATTERN = /^tb1_[A-Za-z0-9_-]{43}$/;
+const AI_REFRESH_WINDOW_SECONDS = 3600;
 
 export interface SharingAccountReader {
   getAccountForOwner(ownerUserId: string): Promise<PsnAccountRecord | null>;
+}
+
+export interface PublicGameRefresher {
+  sync(ownerUserId: string, gameId: string): Promise<GameSyncSummary>;
+}
+
+export interface AiContextPolicy {
+  freshnessSeconds: number;
+  maxRefreshesPerHour: number;
+  maxMissingTrophies: number;
+}
+
+type RefreshOutcome =
+  | "not_requested"
+  | "not_needed"
+  | "success"
+  | "rate_limited"
+  | "cooldown"
+  | "in_progress"
+  | "reauth_required"
+  | "upstream_unavailable"
+  | "failed";
+
+interface RefreshState {
+  requested: boolean;
+  attempted: boolean;
+  outcome: RefreshOutcome;
+  retryAfterSeconds: number | null;
+  errorCode: string | null;
+  newTrophiesFound: number | null;
 }
 
 export function createShareToken(): string {
@@ -55,11 +93,69 @@ function filterTrophies(
   });
 }
 
+function ageSeconds(timestamp: string | null, now: Date): number | null {
+  if (!timestamp) return null;
+  const time = new Date(timestamp).getTime();
+  if (!Number.isFinite(time)) return null;
+  return Math.max(0, Math.floor((now.getTime() - time) / 1000));
+}
+
+function completionPercent(earned: number, total: number): number | null {
+  if (total <= 0) return null;
+  return Math.round((earned / total) * 10_000) / 100;
+}
+
+function hasUsableTrophyState(detail: GameTrophyDetail): boolean {
+  return detail.trophies.length > 0;
+}
+
+function classifyRefreshError(error: unknown): Pick<RefreshState, "outcome" | "retryAfterSeconds" | "errorCode"> {
+  if (error instanceof TrophySyncError) {
+    if (error.code === "SYNC_COOLDOWN") {
+      return {
+        outcome: "cooldown",
+        retryAfterSeconds: error.retryAfterSeconds,
+        errorCode: error.code,
+      };
+    }
+    if (error.code === "SYNC_IN_PROGRESS") {
+      return { outcome: "in_progress", retryAfterSeconds: null, errorCode: error.code };
+    }
+    return { outcome: "failed", retryAfterSeconds: null, errorCode: error.code };
+  }
+
+  if (error instanceof PsnConnectionError) {
+    if (error.code === "REAUTH_REQUIRED") {
+      return { outcome: "reauth_required", retryAfterSeconds: null, errorCode: error.code };
+    }
+    if (error.code === "UPSTREAM_UNAVAILABLE" || error.code === "INVALID_RESPONSE") {
+      return {
+        outcome: "upstream_unavailable",
+        retryAfterSeconds: null,
+        errorCode: error.code,
+      };
+    }
+    return { outcome: "failed", retryAfterSeconds: null, errorCode: error.code };
+  }
+
+  if (error instanceof PsnProviderError) {
+    return {
+      outcome: "upstream_unavailable",
+      retryAfterSeconds: null,
+      errorCode: `PSN_${error.code}`,
+    };
+  }
+
+  return { outcome: "failed", retryAfterSeconds: null, errorCode: "SYNC_FAILED" };
+}
+
 export class ShareService {
   constructor(
     private readonly accounts: SharingAccountReader,
     private readonly repository: SharingRepository,
     private readonly trophies: TrophyRepository,
+    private readonly refresher: PublicGameRefresher,
+    private readonly aiPolicy: AiContextPolicy,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -104,13 +200,14 @@ export class ShareService {
         games: true,
         game_detail: true,
         trophies: true,
-        ai_context: false,
-        refresh: false,
+        ai_context: true,
+        refresh: true,
       },
       endpoints: {
         games: "./games",
         game: "./games/{gameId}",
         trophies: "./games/{gameId}/trophies",
+        ai_context: "./games/{gameId}/ai-context",
       },
     };
   }
@@ -193,6 +290,151 @@ export class ShareService {
       filters: { scope, status },
       count: selected.length,
       trophies: selected,
+    };
+  }
+
+  async getAiContext(token: string, gameId: string, freshRequested: boolean) {
+    const share = await this.resolve(token);
+    await this.requireVisibleGame(share.psnAccountId, gameId);
+
+    let detail = await this.trophies.getGameDetail(share.psnAccountId, gameId);
+    if (!detail) throw new ShareError("GAME_NOT_FOUND");
+
+    const initialUsableState = hasUsableTrophyState(detail);
+    const requestedAt = this.now();
+    const initialAge = ageSeconds(detail.lastTrophySyncAt, requestedAt);
+    const staleBeforeRefresh =
+      initialAge == null || initialAge >= this.aiPolicy.freshnessSeconds;
+
+    let refresh: RefreshState = {
+      requested: freshRequested,
+      attempted: false,
+      outcome: freshRequested ? "not_needed" : "not_requested",
+      retryAfterSeconds: null,
+      errorCode: null,
+      newTrophiesFound: null,
+    };
+
+    if (freshRequested && staleBeforeRefresh) {
+      const claim = await this.repository.claimAiRefresh(
+        share.linkId,
+        requestedAt.toISOString(),
+        AI_REFRESH_WINDOW_SECONDS,
+        this.aiPolicy.maxRefreshesPerHour,
+      );
+
+      if (!claim.allowed) {
+        refresh = {
+          ...refresh,
+          outcome: "rate_limited",
+          retryAfterSeconds: claim.retryAfterSeconds,
+        };
+      } else {
+        refresh = { ...refresh, attempted: true };
+        try {
+          const summary = await this.refresher.sync(share.ownerUserId, gameId);
+          refresh = {
+            ...refresh,
+            outcome: "success",
+            newTrophiesFound: summary.newTrophiesFound,
+          };
+          const refreshed = await this.trophies.getGameDetail(share.psnAccountId, gameId);
+          if (refreshed) detail = refreshed;
+        } catch (error) {
+          const failure = classifyRefreshError(error);
+          refresh = { ...refresh, ...failure };
+
+          if (!initialUsableState) {
+            if (failure.outcome === "upstream_unavailable") {
+              throw new ShareError("PSN_UNAVAILABLE", { retryable: true });
+            }
+            if (failure.outcome === "reauth_required") {
+              throw new ShareError("PSN_REAUTH_REQUIRED");
+            }
+            if (failure.outcome === "failed") {
+              throw new ShareError("SYNC_FAILED", { retryable: true });
+            }
+          }
+        }
+      }
+    }
+
+    const generatedAt = this.now();
+    const currentAge = ageSeconds(detail.lastTrophySyncAt, generatedAt);
+    const isFresh = currentAge != null && currentAge < this.aiPolicy.freshnessSeconds;
+    const baseMissing = detail.trophies.filter(
+      (trophy) => trophy.groupKind === "base" && !trophy.earned,
+    );
+    const includedMissing = baseMissing.slice(0, this.aiPolicy.maxMissingTrophies).map(toPublicTrophy);
+
+    return {
+      schema_version: "1.0",
+      generated_at: generatedAt.toISOString(),
+      identity: {
+        online_id: share.onlineId,
+        preferred_locale: share.preferredLocale,
+        game_id: detail.gameId,
+        title: detail.title,
+        platforms: detail.platforms,
+      },
+      progress: {
+        hydrated: hasUsableTrophyState(detail),
+        library_percent: detail.libraryProgressPercent,
+        base: {
+          earned_count: detail.base.earnedCount,
+          total_count: detail.base.totalCount,
+          missing_count: Math.max(0, detail.base.totalCount - detail.base.earnedCount),
+          completion_percent: completionPercent(detail.base.earnedCount, detail.base.totalCount),
+          platinum_available: detail.base.platinumTotal > 0,
+          platinum_earned: detail.base.platinumEarned > 0,
+        },
+        additional: {
+          earned_count: detail.additional.earnedCount,
+          total_count: detail.additional.totalCount,
+          missing_count: Math.max(0, detail.additional.totalCount - detail.additional.earnedCount),
+          completion_percent: completionPercent(
+            detail.additional.earnedCount,
+            detail.additional.totalCount,
+          ),
+        },
+      },
+      missing_trophies: {
+        scope: "base",
+        count: baseMissing.length,
+        included_count: includedMissing.length,
+        truncated: includedMissing.length < baseMissing.length,
+        items: includedMissing,
+      },
+      recent_activity: detail.recentEvents.map((event) => ({
+        event_type: event.eventType,
+        occurred_at: event.occurredAt,
+        detected_at: event.detectedAt,
+        trophy: {
+          psn_trophy_id: event.psnTrophyId,
+          name: event.trophyName,
+          type: event.trophyType,
+          group_id: event.groupId,
+          scope: event.groupKind === "base" ? "base" : "additional",
+        },
+      })),
+      sync: {
+        last_trophy_sync_at: detail.lastTrophySyncAt,
+        age_seconds: currentAge,
+        freshness_seconds: this.aiPolicy.freshnessSeconds,
+        is_fresh: isFresh,
+        refresh_requested: refresh.requested,
+        refresh_attempted: refresh.attempted,
+        refresh_outcome: refresh.outcome,
+        retry_after_seconds: refresh.retryAfterSeconds,
+        refresh_error_code: refresh.errorCode,
+        new_trophies_found: refresh.newTrophiesFound,
+        served_last_good:
+          refresh.attempted && refresh.outcome !== "success" && initialUsableState,
+      },
+      endpoints: {
+        game: ".",
+        trophies: "./trophies",
+      },
     };
   }
 

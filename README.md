@@ -2,13 +2,13 @@
 
 A privacy-first bridge between PlayStation trophy data and AI-assisted platinum tracking.
 
-TrophyBridge synchronizes factual PlayStation trophy state, separates base-game platinum progress from additional trophy groups, records newly observed trophy events, and exposes revocable read-only JSON for AI clients.
+TrophyBridge synchronizes factual PlayStation trophy state, separates base-game platinum progress from additional trophy groups, records newly observed trophy events, and exposes revocable read-only JSON optimized for AI clients.
 
-> Status: **M7 · Public Share implemented and production schema applied**. The real pilot library contains 196 titles. Final Fantasy XVI has 3 trophy groups, 69 trophies and 18 earned states after M6 successfully detected the first real post-baseline trophy (`Fiamme gemelle`). M7 adds a revocable capability URL over durable database state. **M8 · AI Context** is next and will add the AI-optimized payload plus bounded on-demand freshness so the owner no longer needs to press `Sincronizza trofei` for AI use.
+> Status: **M8 · AI Context implemented and production schema applied**. The pilot library contains 196 titles. Final Fantasy XVI has 3 trophy groups, 69 trophies and 18 earned states after M6 detected the first real post-baseline trophy (`Fiamme gemelle`). M7 provides a revocable public capability and M8 adds an AI-optimized game context plus bounded `fresh=1` single-game refresh. **M9 · Dashboard** is next.
 
 ## MVP goal
 
-The first release is complete when an owner can connect PlayStation securely, synchronize factual trophy state, share a revocable public capability, and let a fresh AI conversation understand current platinum progress without screenshots or manual trophy lists.
+The first release is complete when an owner can connect PlayStation securely, synchronize factual trophy state, share a revocable public capability, and let a fresh AI conversation understand and refresh current platinum progress without screenshots or manual trophy lists.
 
 ## Architecture
 
@@ -26,13 +26,15 @@ Owner -> private dashboard -> PSN credential lifecycle
                                    v
                               PostgreSQL
                               /        \
-                     private UI      M7 public API
+                     private UI      public API
+                                         |
+                         read context + bounded fresh=1
                                          |
                                          v
                                       AI client
 ```
 
-Public M7 reads never contact PlayStation. They serialize the latest durable last-good state. M8 will introduce an explicitly bounded single-game freshness request that reuses the existing synchronization guardrails.
+Normal public reads use durable last-good PostgreSQL state. M8 `fresh=1` may contact PlayStation only for the requested game and only when its trophy snapshot is stale.
 
 ## Core principles
 
@@ -44,8 +46,8 @@ Public M7 reads never contact PlayStation. They serialize the latest durable las
 - PSN group `default` is the structural base game; additional groups never inflate platinum progress.
 - Earned trophy state is monotonic.
 - The first deep sync establishes a baseline; later `false -> true` transitions become progress events.
-- M7 public sharing uses a high-entropy bearer capability whose plaintext is shown only when generated; PostgreSQL stores only its SHA-256 hash.
-- Public links are revocable, non-indexed and read-only.
+- Public sharing uses a high-entropy bearer capability whose plaintext is shown only when generated; PostgreSQL stores only its SHA-256 hash.
+- Public links are revocable, non-indexed and read-only apart from their explicitly bounded ability to request freshness.
 - Unearned hidden trophy metadata is spoiler-masked in public output.
 - **Operating-cost requirement: €0/month.** Optional work must throttle or stop before requiring paid infrastructure.
 
@@ -103,7 +105,7 @@ TOKEN_ENCRYPTION_PREVIOUS_KEYS_JSON
 
 Trophy metadata defaults to `PSN_TROPHY_LOCALE=it-IT`.
 
-Synchronization guardrails:
+Synchronization and M8 AI guardrails:
 
 ```text
 LIBRARY_SYNC_MIN_INTERVAL_SECONDS=3600
@@ -113,21 +115,22 @@ GAME_SYNC_MIN_INTERVAL_SECONDS=300
 GAME_SYNC_MAX_GROUPS=100
 GAME_SYNC_MAX_TROPHIES=1000
 GAME_SYNC_STALE_AFTER_SECONDS=600
+AI_CONTEXT_FRESHNESS_SECONDS=600
+AI_CONTEXT_MAX_REFRESHES_PER_HOUR=12
+AI_CONTEXT_MAX_MISSING_TROPHIES=200
 ```
 
 Real secrets belong only in local/deployment secret stores.
 
-## Implemented synchronization
+## Live synchronization checkpoints
 
-M4 imports lightweight library state manually and conservatively. The first live smoke stored **196** titles.
+M4 imported **196** real titles.
 
-M5 hydrates one explicitly selected title at a time through groups, trophy definitions and user trophy state. The real Final Fantasy XVI baseline contained **3 groups, 69 trophies and 17 earned states**.
+M5 hydrated the real Final Fantasy XVI baseline with **3 groups, 69 trophies and 17 earned states**.
 
-M6 compares the incoming complete snapshot with durable pre-sync state. The first live post-baseline validation detected **`Fiamme gemelle`**, increased FF16 to **18 earned trophies**, created exactly one `trophy_earned` event and recorded `new_trophies_found=1` on the successful game sync.
+M6 detected the first real post-baseline trophy, **`Fiamme gemelle`**, increased FF16 to **18 earned trophies**, created exactly one `trophy_earned` event and recorded `new_trophies_found=1`.
 
-## M7 public sharing
-
-The authenticated dashboard can generate, regenerate or revoke one account-level public capability. A new token is 256 random bits encoded as `tb1_...`; only its SHA-256 hash is stored. Regeneration atomically revokes the previous active link.
+## Public sharing and AI context
 
 Implemented public routes:
 
@@ -136,19 +139,35 @@ GET /api/public/v1/share/{token}
 GET /api/public/v1/share/{token}/games?limit=&offset=
 GET /api/public/v1/share/{token}/games/{gameId}
 GET /api/public/v1/share/{token}/games/{gameId}/trophies?scope=base|dlc|all&status=earned|missing|all
+GET /api/public/v1/share/{token}/games/{gameId}/ai-context?fresh=0|1
 ```
 
-M7 responses are `no-store`, non-indexable, contain no PSN authorization material, exclude hidden library games, and mask the name/description/icon of unearned hidden trophies. `ai-context` and public freshness remain intentionally disabled until M8.
+The M8 AI context contains factual identity, base platinum progress, additional-group summary, bounded missing base trophies, recent M6 progress events, and explicit freshness metadata.
 
-A locally generated `http://localhost:3001/...` capability is useful for browser/local testing but cannot be reached from a fresh remote ChatGPT conversation. Internet validation requires the later Vercel Hobby deployment.
+`fresh=1` behaves conservatively:
+
+1. read the current durable game snapshot;
+2. if it is younger than the default 10-minute freshness window, do not contact PSN;
+3. if stale, atomically claim from the public share's hourly refresh budget;
+4. reuse the existing one-game `TrophySyncService`, including its 5-minute cooldown, single-flight lock and strict snapshot validation;
+5. reload the persisted state after success;
+6. if PSN fails and cached trophy state exists, serve that last-good state and report the refresh outcome instead of destroying availability.
+
+The default share budget is 12 stale refresh claims per hour. A revoked share cannot claim work. The claim RPC is service-role-only.
+
+AI context embeds at most 200 missing base trophies by default. If a very large trophy set is truncated, the normal filtered `/trophies` endpoint remains the complete factual source.
+
+All public responses remain `no-store`, non-indexable, `no-referrer`, exclude hidden library games, and mask name/description/icon for unearned hidden trophies.
+
+A locally generated `http://localhost:3001/...` capability is useful for browser testing but cannot be reached from a fresh remote ChatGPT conversation. Internet validation requires the planned Vercel Hobby deployment.
 
 ## Authentication follow-up
 
-Current owner synchronization still uses the encrypted refresh credential created from the owner's NPSSO bootstrap. Research for the next architecture pass confirmed an important distinction: PlayStation trophy endpoints can use one authenticated PSN account to request another account's trophy data when that target account's privacy settings permit it. TrophyBridge will therefore evaluate separating the **target PSN identity** from the **data-access credential**, instead of assuming the target owner must repeatedly supply NPSSO forever. No claim is made about PSNProfiles' private implementation.
+Current synchronization still uses the encrypted refresh credential created from the owner's NPSSO bootstrap. `psn-api` documents that both title-list and earned-trophy calls accept another numeric target account ID when the authenticating account has permission to view that target. TrophyBridge will therefore test separating the **target PSN identity** from a separately managed **data-access credential**. If the complete pilot flow works that way, recurring owner NPSSO entry can be removed without persisting the owner's NPSSO. No claim is made about PSNProfiles' private implementation.
 
 ## Zero-cost operating envelope
 
-M4-M7 add no paid database, worker, queue, cache, image mirror or polling service. M7 public reads use existing PostgreSQL state and do not fan out to PSN. If free-tier pressure appears, TrophyBridge must reduce work or serve last-good state rather than upgrade automatically.
+M4-M8 add no paid database, worker, queue, cache, image mirror or polling service. M8 freshness is demand-driven, single-game, freshness-gated and share-budgeted. If free-tier or upstream pressure appears, TrophyBridge must reduce work or serve last-good state rather than upgrade automatically.
 
 See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md).
 
@@ -161,10 +180,10 @@ See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md).
 - ✅ **M4 Library Sync**, live 196-title smoke
 - ✅ **M5 Trophy Sync**, live FF16 baseline
 - ✅ **M6 Progress Events**, live post-baseline trophy detected
-- ✅ **M7 Public Share**, implementation + production schema
-- **M8 AI Context + bounded AI-triggered freshness**
+- ✅ **M7 Public Share**, implementation + production schema + local link validation
+- ✅ **M8 AI Context + bounded AI-triggered freshness**, implementation + production schema
 - **M9 Dashboard**
-- **M10 Hardening + deployment validation**
+- **M10 Hardening + hosted deployment validation**
 
 ## Documentation
 

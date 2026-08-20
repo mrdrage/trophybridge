@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ShareError } from "./errors";
 import type {
+  AiRefreshClaim,
   OwnerShareStatus,
   ResolvedShareLink,
   SharingRepository,
@@ -107,7 +108,7 @@ export class SupabaseSharingRepository implements SharingRepository {
     const { data, error } = await this.client
       .from("share_links")
       .select(
-        "id,psn_account_id,is_active,created_at,last_used_at,revoked_at,psn_accounts!inner(psn_online_id,preferred_locale,last_successful_sync_at)",
+        "id,psn_account_id,is_active,created_at,last_used_at,revoked_at,psn_accounts!inner(owner_user_id,psn_online_id,preferred_locale,last_successful_sync_at)",
       )
       .eq("token_hash", tokenHash)
       .maybeSingle();
@@ -119,14 +120,18 @@ export class SupabaseSharingRepository implements SharingRepository {
     const account = objectValue(row.psn_accounts);
     const linkId = stringValue(row.id);
     const psnAccountId = stringValue(row.psn_account_id);
+    const ownerUserId = stringValue(account?.owner_user_id);
     const onlineId = stringValue(account?.psn_online_id);
     const preferredLocale = stringValue(account?.preferred_locale);
     const createdAt = stringValue(row.created_at);
-    if (!linkId || !psnAccountId || !onlineId || !preferredLocale || !createdAt) storageFailure();
+    if (!linkId || !psnAccountId || !ownerUserId || !onlineId || !preferredLocale || !createdAt) {
+      storageFailure();
+    }
 
     return {
       linkId,
       psnAccountId,
+      ownerUserId,
       onlineId,
       preferredLocale,
       lastSuccessfulSyncAt: stringValue(account?.last_successful_sync_at),
@@ -146,6 +151,29 @@ export class SupabaseSharingRepository implements SharingRepository {
       .or(`last_used_at.is.null,last_used_at.lt.${olderThan}`);
 
     if (error) storageFailure();
+  }
+
+  async claimAiRefresh(
+    linkId: string,
+    claimedAt: string,
+    windowSeconds: number,
+    maxClaims: number,
+  ): Promise<AiRefreshClaim> {
+    const { data, error } = await this.client.rpc("claim_share_ai_refresh", {
+      p_link_id: linkId,
+      p_claimed_at: claimedAt,
+      p_window_seconds: windowSeconds,
+      p_max_claims: maxClaims,
+    });
+
+    if (error) storageFailure();
+    const row = objectValue(data);
+    if (!row || typeof row.allowed !== "boolean") storageFailure();
+    const retryAfter = nullableNumber(row.retry_after_seconds);
+    return {
+      allowed: row.allowed,
+      retryAfterSeconds: retryAfter == null ? null : Math.max(0, Math.ceil(retryAfter)),
+    };
   }
 
   async listVisibleGames(psnAccountId: string, limit: number, offset: number): Promise<VisibleGamePage> {

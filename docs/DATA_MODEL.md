@@ -18,7 +18,7 @@ The first real library import contains 196 titles.
 
 ## Trophy model
 
-`trophy_groups` stores one normalized group per game. PSN `default` is the structural base group; numbered groups are persisted as additional (`dlc` enum today) without asserting purchase semantics.
+`trophy_groups` stores one normalized group per game. PSN `default` is the structural base group; numbered groups are persisted as additional without asserting purchase semantics.
 
 `trophies` stores game-scoped trophy IDs, localized text, type, hidden flag, image URL, rarity and PlayStation earned-rate metadata.
 
@@ -30,17 +30,15 @@ The real Final Fantasy XVI checkpoint after M6 contains 3 groups, 69 trophies, 6
 
 `sync_runs` audits bounded library/game work. M6 uses `new_trophies_found` for newly observed earned transitions.
 
-`sync_targets` coordinates per-account/per-game timing. M5/M6 use it with a 300-second default cooldown and one-running-sync protection.
+`sync_targets` coordinates per-account/per-game timing. M5-M8 reuse it with a 300-second default cooldown and one-running-sync protection.
 
 `progress_events` stores meaningful deduplicated activity. The first deep sync is a baseline. Later normal earned transitions create `trophy_earned`; a newly earned platinum also creates `platinum_earned`.
 
 The first real M6 post-baseline event is the FF16 bronze trophy `Fiamme gemelle`.
 
-## M7 sharing model
+## Sharing and M8 refresh-budget model
 
-`share_links` becomes active product state in M7.
-
-Important fields:
+`share_links` stores revocable capability state. Important fields through M8:
 
 ```text
 id
@@ -51,39 +49,40 @@ is_active
 created_at
 last_used_at
 revoked_at
+ai_refresh_window_started_at
+ai_refresh_count
+ai_last_refresh_claimed_at
 ```
 
 The plaintext capability token is **never** stored. Application code generates 256 random bits, formats the bearer token as `tb1_...`, hashes the complete token with SHA-256, and persists only the 64-character hexadecimal hash.
 
-M7 adds a partial unique index so each PSN account can have at most one active capability:
+A partial unique index allows at most one active capability per PSN account. Rotation atomically revokes the previous row and inserts the new token hash. Explicit revocation changes only sharing state and leaves factual trophy history intact.
 
-```text
-share_links_one_active_per_account_idx
-WHERE is_active = true
-```
+`last_used_at` is best-effort coarse access telemetry.
 
-The revocation-state constraint requires active rows to have `revoked_at IS NULL` and inactive rows to have a revocation timestamp.
+The three M8 `ai_refresh_*` fields are operational quota metadata, not trophy facts. They implement a bounded one-hour share-level freshness budget. The application default is 12 stale refresh claims/hour/share.
 
-Server-only RPCs:
+Server-only RPCs through M8:
 
 ```text
 rotate_account_share_link(...)
 revoke_account_share_link(...)
+claim_share_ai_refresh(...)
 ```
 
-Rotation atomically revokes the previous active row and inserts the new token hash. Revocation changes only sharing state; factual account/game/trophy data remains untouched.
+`claim_share_ai_refresh` locks the target share row, resets an expired window, increments an allowed claim atomically, or returns a retry delay when the window is exhausted. Inactive/revoked links cannot claim work.
 
-The functions are executable by `service_role` only. `anon` and `authenticated` cannot invoke them.
-
-`last_used_at` is non-factual access metadata. Public reads may update it best-effort at a coarse interval; a telemetry write failure must not make a valid share read fail.
+All share mutation/budget functions are executable by `service_role` only. `anon` and `authenticated` cannot invoke them.
 
 ## Public serialization model
 
-The database is not exposed directly. The M7 server reads durable state and creates allowlisted DTOs.
+The database is never exposed directly. Next.js resolves an active capability with the trusted server client and creates allowlisted DTOs.
 
-Public data includes online ID, visible library game state, game/group summary and trophy facts. It excludes stable PSN numeric account IDs, TrophyBridge credential material and hidden library titles.
+Public data can include online ID, visible library state, game/group summaries, trophy facts, M6 recent events and M8 freshness metadata. It excludes stable numeric PSN account IDs, TrophyBridge owner IDs, credential material, token hashes and hidden library titles.
 
 For `hidden=true && earned=false`, trophy name, description and icon are masked at serialization time. The stored private factual row is not modified.
+
+M8 `ai-context` is built from the same factual rows. Its `missing_trophies` block includes missing base-game trophies only and is bounded in size; it does not create a second persistence model.
 
 ## Persistence functions
 
@@ -93,22 +92,23 @@ For `hidden=true && earned=false`, trophy name, description and icon are masked 
 
 `persist_game_trophy_snapshot_with_events(...)` is the M6 wrapper that detects transitions and delegates the factual snapshot write within the same transaction.
 
-M7 adds only share-management functions and does not modify factual trophy persistence.
+M7/M8 share functions modify only capability/operational quota metadata. M8 public freshness still writes trophy facts exclusively through the existing `TrophySyncService` and M6 persistence path.
 
 ## RLS and privilege boundary
 
-Domain tables have RLS enabled. Sensitive and factual tables remain deny-by-default to browser roles unless an explicit owner-safe policy exists. Public sharing does not create an anonymous RLS policy; the Next.js server resolves the capability and performs an allowlisted read through the trusted server client.
+Domain tables have RLS enabled. Sensitive and factual tables remain deny-by-default to browser roles unless an explicit owner-safe policy exists. Public sharing does not create an anonymous RLS policy.
 
-## Production checkpoint after M7 migration
+## Production checkpoint after M8 migration
 
 ```text
 games: 196
 account_games: 196
 Final Fantasy XVI groups/trophies/player rows/earned: 3 / 69 / 69 / 18
 progress_events: 1
-share_links immediately after migration: 0
-active share links immediately after migration: 0
-rotate/revoke RPC: service_role yes, authenticated no
+share_links: 1
+active share_links: 1
+active share ai_refresh_count immediately after migration: 0
+claim refresh RPC: service_role yes, authenticated no
 ```
 
-M7 migration therefore adds sharing capability without manufacturing a public token or altering trophy state.
+The M8 migration preserves factual trophy state and the existing active M7 capability while adding only bounded refresh-budget metadata.

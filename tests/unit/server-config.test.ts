@@ -1,10 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { getAppUrl, getPsnTrophyLocale } from "../../lib/config/server";
+import { getAiContextPolicy, getAppUrl, getPsnTrophyLocale } from "../../lib/config/server";
 
 describe("server configuration", () => {
   it("defaults the trophy metadata locale to Italian", () => {
     expect(getPsnTrophyLocale({} as NodeJS.ProcessEnv)).toBe("it-IT");
+  });
+
+  it("defaults M8 AI freshness to ten minutes with a bounded hourly refresh budget", () => {
+    expect(getAiContextPolicy({} as NodeJS.ProcessEnv)).toEqual({
+      freshnessSeconds: 600,
+      maxRefreshesPerHour: 12,
+      maxMissingTrophies: 200,
+    });
+  });
+
+  it("rejects an unbounded M8 public refresh budget", () => {
+    expect(() =>
+      getAiContextPolicy(
+        { AI_CONTEXT_MAX_REFRESHES_PER_HOUR: "1000" } as unknown as NodeJS.ProcessEnv,
+      ),
+    ).toThrow("AI_CONTEXT_MAX_REFRESHES_PER_HOUR");
   });
 
   it("allows localhost as the application URL only for development/test", () => {

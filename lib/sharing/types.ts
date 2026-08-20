@@ -13,6 +13,7 @@ export interface RotatedShareLink extends OwnerShareStatus {
 export interface ResolvedShareLink {
   linkId: string;
   psnAccountId: string;
+  ownerUserId: string;
   onlineId: string;
   preferredLocale: string;
   lastSuccessfulSyncAt: string | null;
@@ -20,6 +21,11 @@ export interface ResolvedShareLink {
   lastUsedAt: string | null;
   active: boolean;
   revokedAt: string | null;
+}
+
+export interface AiRefreshClaim {
+  allowed: boolean;
+  retryAfterSeconds: number | null;
 }
 
 export interface VisibleGameRecord {
@@ -77,6 +83,12 @@ export interface SharingRepository {
   revokeActiveLink(psnAccountId: string, revokedAt: string): Promise<OwnerShareStatus>;
   resolveByTokenHash(tokenHash: string): Promise<ResolvedShareLink | null>;
   touchLink(linkId: string, usedAt: string, olderThan: string): Promise<void>;
+  claimAiRefresh(
+    linkId: string,
+    claimedAt: string,
+    windowSeconds: number,
+    maxClaims: number,
+  ): Promise<AiRefreshClaim>;
   listVisibleGames(psnAccountId: string, limit: number, offset: number): Promise<VisibleGamePage>;
   isGameVisible(psnAccountId: string, gameId: string): Promise<boolean>;
 }

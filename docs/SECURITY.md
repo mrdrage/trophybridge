@@ -1,6 +1,6 @@
 # TrophyBridge Security Model
 
-Security is part of the product contract because TrophyBridge handles PlayStation authorization and now exposes revocable bearer capabilities.
+Security is part of the product contract because TrophyBridge handles PlayStation authorization and exposes revocable bearer capabilities that may request bounded freshness.
 
 ## Trust boundaries
 
@@ -15,47 +15,31 @@ Never expose or log:
 - authorization headers;
 - Supabase service-role/secret keys;
 - `TOKEN_ENCRYPTION_KEY` or previous encryption keys;
-- plaintext M7 share capability tokens outside the owner response/browser that requested them.
+- plaintext share capability tokens outside the owner response/browser that requested them.
 
-A public share URL is intentionally a **bearer capability**. It is less privileged than PSN authorization but must still be treated as a secret because possession grants read access to the allowlisted shared trophy state.
+A public share URL is a bearer capability. It is less privileged than PSN authorization but possession grants read access to the allowlisted shared trophy state and, in M8, the ability to request strictly bounded single-game freshness.
 
 ## PSN credential lifecycle
 
-NPSSO is accepted only through a private Node route for bootstrap. It is exchanged for PlayStation authorization and discarded. Access tokens are runtime-only. The durable refresh token is encrypted with AES-256-GCM using a fresh IV, authenticated data bound to the TrophyBridge/PSN account identity, and key versioning.
+NPSSO is accepted only through a private Node route for bootstrap, exchanged for PlayStation authorization and discarded. Access tokens are runtime-only. The durable refresh token is encrypted with AES-256-GCM using a fresh IV, authenticated data bound to account identity, and key versioning.
 
 `psn_credentials` remains server-only. `anon` and `authenticated` receive no read access.
 
-## TrophyBridge session security
+## TrophyBridge owner and PSN identity
 
-Supabase Auth + GitHub OAuth identifies the TrophyBridge owner. SSR cookies are refreshed only on private/auth paths. Private responses are non-cacheable. The Supabase service-role client exists only in server modules.
+Supabase Auth + GitHub OAuth identifies the TrophyBridge owner. A claimed PSN Online ID does not establish ownership. Initial connection resolves a stable account ID and verifies the authenticated profile with `isMe=true` and exact Online ID matching.
 
-## PSN identity verification
+A future data-access architecture may separate the verified target PSN identity from the PSN identity authenticating read requests. Ownership proof and later data-access authorization must remain distinct security concepts.
 
-A claimed Online ID does not establish ownership. Initial connection resolves a stable account ID and then verifies the authenticated profile with `isMe=true` and exact Online ID matching. The username lookup fallback cannot bypass this final verification.
+## Public capability generation
 
-A future data-access-credential architecture may separate the target account from the authenticating PSN account. If implemented, the initial ownership proof and the later read credential must remain distinct security concepts.
+M7 generates a 256-bit random token formatted as `tb1_<43 base64url characters>`. The server stores only its SHA-256 hexadecimal hash. TrophyBridge cannot recover a lost plaintext URL from PostgreSQL. Regeneration creates a fresh token and atomically revokes the prior active capability; explicit revocation preserves factual trophy history.
 
-## M7 capability generation
+At most one active capability exists per account.
 
-M7 generates a 256-bit random token with Node.js `crypto.randomBytes(32)` and formats it as:
+## Public allowlist
 
-```text
-tb1_<43 base64url characters>
-```
-
-The server computes SHA-256 over the complete token and stores only the hexadecimal hash in `share_links`. The plaintext token is returned only by the creation response and shown only in the current owner browser session.
-
-Consequences:
-
-- a database leak does not directly reveal active public URLs;
-- TrophyBridge cannot recover a lost plaintext URL from the database;
-- regeneration creates a fresh token and atomically revokes the prior active capability;
-- at most one active capability exists per account;
-- explicit revocation invalidates the current token without deleting factual trophy history.
-
-## M7 public allowlist
-
-Public routes may expose only explicitly serialized factual fields. They never expose:
+Public routes never expose:
 
 ```text
 PSN refresh/access/NPSSO material
@@ -68,11 +52,9 @@ internal credential records
 raw provider/storage errors
 ```
 
-Hidden library games are not returned. Unearned hidden trophy name, description and icon are masked by the public serializer. Earned hidden trophies may expose known metadata because the spoiler has already been unlocked by the owner.
+Hidden library games are excluded. Unearned hidden trophy name, description and icon are spoiler-masked. Earned hidden trophies may expose known metadata because the owner has already unlocked them.
 
-## Capability transport hardening
-
-Tokenized responses set:
+Tokenized responses use:
 
 ```text
 Cache-Control: no-store, max-age=0
@@ -81,25 +63,38 @@ Referrer-Policy: no-referrer
 X-Content-Type-Options: nosniff
 ```
 
-The API does not render third-party HTML around the token URL. The bearer token must not appear in analytics, error messages or server logs.
+Optional `last_used_at` telemetry is best-effort and cannot make an otherwise valid read fail.
 
-M7 records optional coarse `last_used_at` metadata only. That telemetry is best-effort and must not alter authorization outcome.
+## M8 bounded freshness security
+
+`ai-context?fresh=1` does not grant a public consumer unrestricted PSN access.
+
+Before contacting PSN, TrophyBridge:
+
+1. validates the capability and confirms it is active;
+2. validates that the requested game belongs to the visible shared library;
+3. reads the current durable trophy snapshot;
+4. skips PSN entirely when the snapshot is within the configured freshness window;
+5. for stale state, atomically claims from the share's refresh budget;
+6. reuses `TrophySyncService` for exactly one game, including the existing per-game cooldown, database single-flight and snapshot bounds.
+
+The default public freshness budget is 12 stale refresh claims/hour/share. The claim function locks the share row during quota accounting. Revoked capabilities cannot claim. Execution is revoked from `public`, `anon` and `authenticated` and granted only to `service_role`.
+
+One public request cannot trigger a full-library crawl.
+
+If refresh fails but durable trophy state exists, M8 returns that last-good state with an explicit non-success refresh outcome. Provider failure never authorizes rollback or deletion of factual earned state.
 
 ## Database privileges
 
-M7 share rotation/revocation is performed by server-only PostgreSQL functions. Execution is revoked from `public`, `anon` and `authenticated`, and granted only to `service_role`.
-
-Public reads do **not** grant anonymous direct table access. Next.js resolves the token hash with the trusted server client and returns an allowlisted DTO.
+Share rotation/revocation and M8 refresh-budget claims are performed by server-only PostgreSQL functions. Public reads do not grant anonymous direct table access. Next.js resolves token hashes with the trusted server client and returns allowlisted DTOs.
 
 ## Error behavior
 
-Unknown/malformed tokens return `INVALID_SHARE_TOKEN`. Known revoked capabilities return `SHARE_LINK_REVOKED`. Errors use stable safe messages and a generated request ID. Raw database/provider errors are never returned.
+Unknown/malformed tokens return `INVALID_SHARE_TOKEN`; known revoked capabilities return `SHARE_LINK_REVOKED`. M8 may also return safe `PSN_UNAVAILABLE`, `PSN_REAUTH_REQUIRED` or `SYNC_FAILED` errors when no usable cached trophy snapshot exists. Stable messages include a request ID; raw database/provider errors are never returned.
 
 ## Synchronization safety
 
-M5/M6 still require complete, bounded snapshots and preserve last-good state. Public M7 GET requests never contact PSN and cannot create unbounded upstream work.
-
-M8 `fresh=1`, when implemented, must reuse per-game cooldown/single-flight/size controls and serve last-good data on provider failure.
+M5-M8 require complete bounded game snapshots and preserve last-good state. Earned trophy state remains monotonic. Public freshness reuses the same synchronization boundary instead of implementing a second weaker writer.
 
 ## CI and repository hygiene
 
