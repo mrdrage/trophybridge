@@ -46,16 +46,16 @@ begin
   end if;
 
   if not exists (
-    select 1 from public.psn_accounts where id = p_psn_account_id
+    select 1 from public.psn_accounts pa where pa.id = p_psn_account_id
   ) then
     raise exception 'psn account not found' using errcode = '23503';
   end if;
 
-  update public.share_links
+  update public.share_links as sl
   set is_active = false,
       revoked_at = p_created_at
-  where psn_account_id = p_psn_account_id
-    and is_active = true;
+  where sl.psn_account_id = p_psn_account_id
+    and sl.is_active = true;
 
   return query
   insert into public.share_links (
@@ -107,11 +107,11 @@ begin
   order by sl.created_at desc
   limit 1;
 
-  update public.share_links
+  update public.share_links as sl
   set is_active = false,
       revoked_at = p_revoked_at
-  where psn_account_id = p_psn_account_id
-    and is_active = true;
+  where sl.psn_account_id = p_psn_account_id
+    and sl.is_active = true;
 
   return query
   select false, latest_created, latest_used;
