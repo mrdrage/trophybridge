@@ -66,15 +66,21 @@ language sql
 as $$ select 1 $$;
 
 do $$
+declare
+  future_function_grants integer;
 begin
   if has_table_privilege('anon', 'public.m10_future_table_probe', 'SELECT')
      or has_table_privilege('authenticated', 'public.m10_future_table_probe', 'SELECT') then
     raise exception 'future public tables must not grant browser roles by default';
   end if;
 
-  if has_function_privilege('PUBLIC', 'public.m10_future_function_probe()', 'EXECUTE')
-     or has_function_privilege('anon', 'public.m10_future_function_probe()', 'EXECUTE')
-     or has_function_privilege('authenticated', 'public.m10_future_function_probe()', 'EXECUTE') then
+  select count(*) into future_function_grants
+  from information_schema.routine_privileges
+  where routine_schema = 'public'
+    and routine_name = 'm10_future_function_probe'
+    and grantee in ('PUBLIC', 'anon', 'authenticated');
+
+  if future_function_grants <> 0 then
     raise exception 'future public functions must not grant browser/public execution by default';
   end if;
 end;
