@@ -2,13 +2,13 @@
 
 A privacy-first bridge between PlayStation trophy data and AI-assisted platinum tracking.
 
-TrophyBridge synchronizes factual PlayStation trophy state, keeps base-game progress separate from additional trophy groups, and is being built to expose a stable read-only API that an AI assistant can use for platinum guidance.
+TrophyBridge synchronizes factual PlayStation trophy state, separates base-game platinum progress from additional trophy groups, records newly observed trophy events, and exposes revocable read-only JSON for AI clients.
 
-> Status: **M6 · Progress Events implemented**. M4 has been validated against the real pilot account with 196 library titles imported and M5 has been validated live on Final Fantasy XVI with 3 trophy groups, 69 trophies, and 17 earned states persisted. M6 now detects newly earned trophies on later game syncs without backfilling historical trophies. The next implementation milestone is **M7 · Public Share** after the first real post-baseline trophy delta is observed.
+> Status: **M7 · Public Share implemented and production schema applied**. The real pilot library contains 196 titles. Final Fantasy XVI has 3 trophy groups, 69 trophies and 18 earned states after M6 successfully detected the first real post-baseline trophy (`Fiamme gemelle`). M7 adds a revocable capability URL over durable database state. **M8 · AI Context** is next and will add the AI-optimized payload plus bounded on-demand freshness so the owner no longer needs to press `Sincronizza trofei` for AI use.
 
 ## MVP goal
 
-The first release is complete when a user can sign in, connect a PSN account, synchronize a game such as Final Fantasy XVI, expose a revocable public share link, and let a fresh AI conversation understand current platinum progress without screenshots or manual trophy lists.
+The first release is complete when an owner can connect PlayStation securely, synchronize factual trophy state, share a revocable public capability, and let a fresh AI conversation understand current platinum progress without screenshots or manual trophy lists.
 
 ## Architecture
 
@@ -16,58 +16,42 @@ The first release is complete when a user can sign in, connect a PSN account, sy
 GitHub OAuth -> Supabase Auth
                     |
                     v
-User -> private TrophyBridge dashboard -> transient NPSSO bootstrap
-                                      |
-                                      v
-                              PSN authorization
-                                      |
-                              encrypted refresh token
-                                      |
-                                      v
-PlayStation Network -> PsnApiProvider -> PsnProvider -> TrophyBridge Core
-                                                        |
-                                                        v
-                                                   PostgreSQL
-                                                    /      \
-                                             Dashboard    Public API
-                                                            |
-                                                            v
-                                                           AI
+Owner -> private dashboard -> PSN credential lifecycle
+                    |                |
+                    |                v
+                    |          PsnApiProvider
+                    |                |
+                    +------> TrophyBridge Core
+                                   |
+                                   v
+                              PostgreSQL
+                              /        \
+                     private UI      M7 public API
+                                         |
+                                         v
+                                      AI client
 ```
+
+Public M7 reads never contact PlayStation. They serialize the latest durable last-good state. M8 will introduce an explicitly bounded single-game freshness request that reuses the existing synchronization guardrails.
 
 ## Core principles
 
-- Secrets never enter the public API or repository.
-- NPSSO is bootstrap-only and is never persisted.
-- PSN access tokens are runtime-only.
-- The durable PSN refresh token is encrypted server-side with AES-256-GCM, account-bound authenticated data, and key versioning.
-- Application code depends on `PsnProvider`, not raw `psn-api` payloads.
-- Provider payloads are runtime-validated before persistence.
-- The `default` trophy group is structurally treated as base game; additional groups remain separate from platinum progress.
-- Partial or inconsistent deep trophy responses are rejected before they can replace last-good state.
-- Earned trophy state is monotonic and known localized metadata is not erased by later null values.
-- The first deep sync establishes a baseline; only later durable `false -> true` earned transitions become progress events.
-- A newly earned platinum creates both the normal trophy event and a dedicated platinum event.
-- Public sharing will be read-only, revocable, non-indexed, and token based.
-- **Operating-cost target is €0/month.** Optional work must throttle or stop before requiring paid infrastructure.
+- Secrets never enter public responses or Git history.
+- NPSSO is bootstrap material and is never persisted.
+- PSN access tokens are runtime-only; the durable refresh credential is encrypted with AES-256-GCM.
+- Application code depends on TrophyBridge-owned `PsnProvider`, not raw provider payloads.
+- Incomplete deep trophy snapshots are rejected before persistence.
+- PSN group `default` is the structural base game; additional groups never inflate platinum progress.
+- Earned trophy state is monotonic.
+- The first deep sync establishes a baseline; later `false -> true` transitions become progress events.
+- M7 public sharing uses a high-entropy bearer capability whose plaintext is shown only when generated; PostgreSQL stores only its SHA-256 hash.
+- Public links are revocable, non-indexed and read-only.
+- Unearned hidden trophy metadata is spoiler-masked in public output.
+- **Operating-cost requirement: €0/month.** Optional work must throttle or stop before requiring paid infrastructure.
 
 ## Stack
 
-- TypeScript
-- Next.js App Router and `proxy.ts`
-- Node.js 24 recommended
-- pnpm 11.20.0
-- PostgreSQL via Supabase Free
-- Supabase Auth + `@supabase/ssr`
-- GitHub OAuth
-- `psn-api` 2.18.1 behind `PsnApiProvider`
-- AES-256-GCM through Node.js `crypto`
-- Zod
-- Vitest
-- PostgreSQL invariant tests
-- Playwright
-- GitHub Actions on the public repository
-- Vercel Hobby planned for deployment
+TypeScript, Next.js App Router, Node.js 24, pnpm 11.20.0, PostgreSQL via Supabase Free, Supabase Auth + SSR, GitHub OAuth, pinned `psn-api` 2.18.1 behind `PsnApiProvider`, Zod, AES-256-GCM, Vitest, PostgreSQL invariant tests, Playwright, GitHub Actions, and Vercel Hobby planned for deployment.
 
 ## Local development
 
@@ -79,7 +63,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Port `3000` remains the framework/CI default. The owner's local TrophyBridge instance uses:
+Port `3000` remains the framework/CI default. The owner local instance uses:
 
 ```bash
 pnpm dev:local
@@ -111,108 +95,62 @@ TOKEN_ENCRYPTION_KEY_VERSION
 APP_URL
 ```
 
-Optional during encryption-key rotation:
+Optional key rotation:
 
 ```text
 TOKEN_ENCRYPTION_PREVIOUS_KEYS_JSON
 ```
 
-Trophy metadata locale defaults to:
+Trophy metadata defaults to `PSN_TROPHY_LOCALE=it-IT`.
 
-```text
-PSN_TROPHY_LOCALE=it-IT
-```
-
-M4 library guardrails:
+Synchronization guardrails:
 
 ```text
 LIBRARY_SYNC_MIN_INTERVAL_SECONDS=3600
 LIBRARY_SYNC_MAX_GAMES=2000
 LIBRARY_SYNC_STALE_AFTER_SECONDS=600
-```
-
-M5/M6 game-trophy guardrails:
-
-```text
 GAME_SYNC_MIN_INTERVAL_SECONDS=300
 GAME_SYNC_MAX_GROUPS=100
 GAME_SYNC_MAX_TROPHIES=1000
 GAME_SYNC_STALE_AFTER_SECONDS=600
 ```
 
-Real secret values belong only in local/deployment secret stores, never in Git.
+Real secrets belong only in local/deployment secret stores.
 
-## Authentication flow
+## Implemented synchronization
 
-1. The TrophyBridge owner signs in through GitHub OAuth backed by Supabase Auth.
-2. The private dashboard accepts the PSN Online ID and NPSSO.
-3. NPSSO is exchanged for PlayStation tokens server-side.
-4. TrophyBridge resolves the PSN identity, with a direct username lookup fallback when Universal Search omits a valid owner profile.
-5. The stable account is always re-verified through `getProfileFromAccountId`, requiring `isMe=true` and the claimed Online ID.
-6. NPSSO is discarded; only the refresh token is encrypted and persisted.
-7. Later synchronization obtains authorization only through `PsnConnectionService.createProviderForOwner(ownerUserId)`.
+M4 imports lightweight library state manually and conservatively. The first live smoke stored **196** titles.
 
-## M4 library synchronization
+M5 hydrates one explicitly selected title at a time through groups, trophy definitions and user trophy state. The real Final Fantasy XVI baseline contained **3 groups, 69 trophies and 17 earned states**.
 
-M4 performs a lightweight manual import:
+M6 compares the incoming complete snapshot with durable pre-sync state. The first live post-baseline validation detected **`Fiamme gemelle`**, increased FF16 to **18 earned trophies**, created exactly one `trophy_earned` event and recorded `new_trophies_found=1` on the successful game sync.
 
-```text
-POST /api/private/v1/library/sync
-  -> PsnConnectionService.createProviderForOwner(ownerUserId)
-  -> PsnProvider.getGames()
-  -> persist_library_snapshot(...)
-  -> games + account_games + sync_runs
-```
+## M7 public sharing
 
-The first live smoke imported **196** real titles successfully. Dashboard ordering uses PSN's `psn_last_updated_at`, not the common local import timestamp, so recent games appear first.
+The authenticated dashboard can generate, regenerate or revoke one account-level public capability. A new token is 256 random bits encoded as `tb1_...`; only its SHA-256 hash is stored. Regeneration atomically revokes the previous active link.
 
-## M5 trophy synchronization
-
-M5 hydrates exactly one selected title at a time:
+Implemented public routes:
 
 ```text
-POST /api/private/v1/games/{gameId}/sync
-  -> verified owner/library target
-  -> PsnConnectionService.createProviderForOwner(ownerUserId)
-  -> PsnProvider.getTrophyGroups()
-  -> PsnProvider.getTrophies()
-  -> PsnProvider.getUserTrophies()
-  -> strict completeness validation
-  -> atomic trophy snapshot persistence
+GET /api/public/v1/share/{token}
+GET /api/public/v1/share/{token}/games?limit=&offset=
+GET /api/public/v1/share/{token}/games/{gameId}
+GET /api/public/v1/share/{token}/games/{gameId}/trophies?scope=base|dlc|all&status=earned|missing|all
 ```
 
-The live Final Fantasy XVI baseline contains **3 groups, 69 trophies, and 17 earned player states**. Base-game and additional groups are stored separately.
+M7 responses are `no-store`, non-indexable, contain no PSN authorization material, exclude hidden library games, and mask the name/description/icon of unearned hidden trophies. `ai-context` and public freshness remain intentionally disabled until M8.
 
-## M6 progress events
+A locally generated `http://localhost:3001/...` capability is useful for browser/local testing but cannot be reached from a fresh remote ChatGPT conversation. Internet validation requires the later Vercel Hobby deployment.
 
-M6 extends the same bounded per-game sync. Before the M5 factual snapshot is updated, PostgreSQL captures existing unearned states and compares them with the incoming complete snapshot.
+## Authentication follow-up
 
-```text
-existing durable player state
-  + incoming complete PSN snapshot
-  -> false -> true transition detection
-  -> persist_game_trophy_snapshot_with_events(...)
-  -> factual state + progress_events in one transaction
-```
-
-Rules:
-
-- first deep sync is a baseline and creates no historical flood;
-- later newly earned trophies create one `trophy_earned` event;
-- a newly earned platinum also creates `platinum_earned`;
-- `occurred_at` uses PSN's earned timestamp when supplied;
-- events are deduplicated by database constraints;
-- each event is tied to the game sync run that detected it;
-- `sync_runs.new_trophies_found` records the number of newly earned trophies found in that run;
-- the private game page shows up to 20 recent progress events.
-
-M6 does not introduce polling, queues, cron jobs, or another hosted service. Detection happens only when the existing manual game sync runs.
+Current owner synchronization still uses the encrypted refresh credential created from the owner's NPSSO bootstrap. Research for the next architecture pass confirmed an important distinction: PlayStation trophy endpoints can use one authenticated PSN account to request another account's trophy data when that target account's privacy settings permit it. TrophyBridge will therefore evaluate separating the **target PSN identity** from the **data-access credential**, instead of assuming the target owner must repeatedly supply NPSSO forever. No claim is made about PSNProfiles' private implementation.
 
 ## Zero-cost operating envelope
 
-TrophyBridge treats **€0/month** as an architecture requirement. M4 through M6 are manual, bounded, single-flight synchronization paths. Normal reads use PostgreSQL and do not contact PSN. Images remain upstream URLs instead of being mirrored to paid storage.
+M4-M7 add no paid database, worker, queue, cache, image mirror or polling service. M7 public reads use existing PostgreSQL state and do not fan out to PSN. If free-tier pressure appears, TrophyBridge must reduce work or serve last-good state rather than upgrade automatically.
 
-See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md) and the ADRs for the enforceable limits.
+See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md).
 
 ## Development roadmap
 
@@ -220,13 +158,13 @@ See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md) and the ADRs for the 
 - ✅ **M1 Domain Model**
 - ✅ **M2 PSN Provider**
 - ✅ **M3 Authentication**
-- ✅ **M4 Library Sync**, including real owner/library smoke
-- ✅ **M5 Trophy Sync**, including real Final Fantasy XVI baseline smoke
-- ✅ **M6 Progress Events**, implementation/schema complete; first real post-baseline trophy delta next
-- **M7 Public Share**
-- **M8 AI Context**
+- ✅ **M4 Library Sync**, live 196-title smoke
+- ✅ **M5 Trophy Sync**, live FF16 baseline
+- ✅ **M6 Progress Events**, live post-baseline trophy detected
+- ✅ **M7 Public Share**, implementation + production schema
+- **M8 AI Context + bounded AI-triggered freshness**
 - **M9 Dashboard**
-- **M10 Hardening**
+- **M10 Hardening + deployment validation**
 
 ## Documentation
 
@@ -242,4 +180,4 @@ See [`docs/COST_GUARDRAILS.md`](./docs/COST_GUARDRAILS.md) and the ADRs for the 
 
 ## Disclaimer
 
-TrophyBridge is an independent project and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. The PSN integration is isolated because community-documented interfaces can change.
+TrophyBridge is independent and is not affiliated with, endorsed by, or sponsored by Sony Interactive Entertainment or PlayStation. The PSN integration is isolated because community-documented interfaces can change.

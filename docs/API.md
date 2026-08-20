@@ -2,27 +2,11 @@
 
 ## Base paths
 
-Private authenticated routes:
+Private authenticated routes live under `/api/private/v1/...`. Public capability routes live under `/api/public/v1/share/{token}/...`. The non-sensitive health route remains `GET /api/public/v1/health`.
 
-```text
-/api/private/v1/...
-```
+Private responses are `Cache-Control: private, no-store`. M7 tokenized public responses are `Cache-Control: no-store, max-age=0`, `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
 
-Future public share routes:
-
-```text
-/api/public/v1/share/{token}/...
-```
-
-Current non-sensitive health route:
-
-```text
-GET /api/public/v1/health
-```
-
-All current private JSON responses use `Cache-Control: private, no-store`.
-
-## Current private API
+## Private API
 
 ### PSN connection
 
@@ -33,30 +17,13 @@ POST /api/private/v1/psn/refresh
 POST /api/private/v1/psn/disconnect
 ```
 
-These routes require a TrophyBridge owner session. Authentication material is never returned.
-
 ### Library synchronization
 
 ```text
 POST /api/private/v1/library/sync
 ```
 
-M4 performs one bounded library synchronization for the authenticated owner. It gets authorization through `PsnConnectionService`, calls normalized `PsnProvider.getGames()`, persists an atomic last-good library snapshot, and applies account-level concurrency/cooldown/library-size guards.
-
-Representative success:
-
-```json
-{
-  "summary": {
-    "processedCount": 196,
-    "discoveredCount": 196,
-    "syncedAt": "2026-08-19T18:49:45.644Z",
-    "nextAllowedAt": "2026-08-19T19:49:45.644Z"
-  }
-}
-```
-
-Representative errors include `SYNC_COOLDOWN`, `SYNC_IN_PROGRESS`, `LIBRARY_TOO_LARGE`, normalized PSN errors, and `SYNC_FAILED`.
+One bounded lightweight library snapshot. Default cooldown is one hour and maximum accepted library size is 2,000 titles.
 
 ### Per-game trophy synchronization
 
@@ -64,118 +31,94 @@ Representative errors include `SYNC_COOLDOWN`, `SYNC_IN_PROGRESS`, `LIBRARY_TOO_
 POST /api/private/v1/games/{gameId}/sync
 ```
 
-M5/M6 hydrate exactly one game already present in the authenticated owner's synchronized library and detect newly earned trophies against the existing durable baseline.
+One complete game snapshot with M6 event detection. The response includes `newTrophiesFound` after the baseline. Default cooldown is 300 seconds with at most 100 groups and 1,000 trophies.
 
-The route:
+### M7 public-share management
 
-1. validates the internal UUID `gameId`;
-2. verifies that the game belongs to the connected account's `account_games` set;
-3. obtains the provider only through `PsnConnectionService.createProviderForOwner(ownerUserId)`;
-4. reads trophy groups, title trophy metadata, and user trophy state;
-5. rejects incomplete or inconsistent snapshots before any write;
-6. atomically persists the validated snapshot and any M6 progress events;
-7. returns a compact safe summary including the number of newly detected trophies.
+```text
+GET    /api/private/v1/share
+POST   /api/private/v1/share
+DELETE /api/private/v1/share
+```
 
-Representative success:
+`GET` returns only safe share status. `POST` atomically revokes any previous account share and creates a fresh capability. It returns the plaintext token **once**, for the current response/browser session. PostgreSQL stores only SHA-256. `DELETE` revokes the active link.
+
+Representative creation shape:
 
 ```json
 {
-  "summary": {
-    "gameId": "uuid",
-    "processedCount": 69,
-    "earnedCount": 18,
-    "baseTrophyCount": 50,
-    "baseEarnedCount": 17,
-    "additionalTrophyCount": 19,
-    "additionalEarnedCount": 1,
-    "newTrophiesFound": 1,
-    "syncedAt": "2026-08-19T20:30:00.000Z",
-    "nextAllowedAt": "2026-08-19T20:35:00.000Z"
+  "share": {
+    "active": true,
+    "createdAt": "2026-08-20T12:00:00.000Z",
+    "lastUsedAt": null,
+    "token": "tb1_<43 base64url chars>"
   }
 }
 ```
 
-The numeric values above are illustrative API shape only. `newTrophiesFound` counts newly earned trophies, not raw event rows, so a newly earned platinum still contributes `1` even though M6 also writes a dedicated `platinum_earned` event.
+The raw token is a bearer secret. It must not be committed, logged, pasted into public issues, or placed in indexed pages.
 
-Error codes include:
+## M7 public API
 
-```text
-GAME_NOT_FOUND
-SYNC_COOLDOWN
-SYNC_IN_PROGRESS
-TROPHY_SNAPSHOT_TOO_LARGE
-INVALID_TROPHY_SNAPSHOT
-STORAGE_ERROR
-PSN_AUTH_REQUIRED
-PSN_FORBIDDEN
-PSN_NOT_FOUND
-PSN_RATE_LIMITED
-PSN_INVALID_RESPONSE
-PSN_UPSTREAM_UNAVAILABLE
-SYNC_FAILED
-```
+All M7 public reads use durable PostgreSQL state. They do not contact PlayStation and cannot trigger synchronization.
 
-`SYNC_COOLDOWN` may include `retryAfterSeconds`. Provider and storage exceptions are normalized so raw upstream or credential-bearing messages are not exposed.
-
-## M5 snapshot semantics
-
-A deep trophy write is allowed only for a complete, bounded snapshot. TrophyBridge validates:
-
-- one and only one base group, PSN group ID `default`;
-- unique group IDs;
-- unique title trophy IDs;
-- unique user trophy IDs;
-- each title trophy references a returned group;
-- each group's actual trophy-type counts exactly equal its `definedTrophies` totals;
-- title/user trophy arrays cover the same complete set;
-- title and user trophy types match for every ID.
-
-A rejected/failed sync leaves the previous persisted trophy state intact.
-
-Additional groups are persisted separately from the base group. Base platinum calculations use only trophies attached to the `default` base group.
-
-## M6 progress-event semantics
-
-The first successful deep snapshot of a game is a baseline. Earned trophies already present in that first snapshot are factual state, not newly observed activity, and produce no progress events.
-
-Later complete snapshots create events only for durable transitions:
-
-```text
-previous earned=false + incoming earned=true
-```
-
-Event mapping:
-
-```text
-normal newly earned trophy -> trophy_earned
-newly earned platinum      -> trophy_earned + platinum_earned
-```
-
-`occurred_at` uses PSN's earned timestamp when available. `detected_at` is the synchronization timestamp. Each event is linked to the game sync run that detected it and database uniqueness constraints make replays idempotent.
-
-The current private game page reads at most 20 recent trophy/platinum events from PostgreSQL. Opening the page does not trigger PSN traffic.
-
-## Planned public share API
-
-Share root:
+### Discovery
 
 ```text
 GET /api/public/v1/share/{token}
 ```
 
-Games:
+Representative shape:
 
-```text
-GET /api/public/v1/share/{token}/games
+```json
+{
+  "schema_version": "1.0",
+  "account": {
+    "online_id": "example-player",
+    "preferred_locale": "it-IT"
+  },
+  "library": {
+    "visible_games": 120
+  },
+  "sync": {
+    "last_successful_sync_at": "2026-08-20T11:44:03.787Z"
+  },
+  "capabilities": {
+    "games": true,
+    "game_detail": true,
+    "trophies": true,
+    "ai_context": false,
+    "refresh": false
+  },
+  "endpoints": {
+    "games": "./games",
+    "game": "./games/{gameId}",
+    "trophies": "./games/{gameId}/trophies"
+  }
+}
 ```
 
-Game detail:
+Stable PSN numeric account IDs and authentication material are not exposed.
+
+### Games
+
+```text
+GET /api/public/v1/share/{token}/games?limit=100&offset=0
+```
+
+`limit` defaults to 100 and is capped at 200. `offset` defaults to 0 and is bounded to 2,000. Hidden library titles are excluded.
+
+Each game exposes a TrophyBridge `game_id`, title/platform/icon, aggregate PSN progress and trophy counters, plus provider/local sync timestamps.
+
+### Game detail
 
 ```text
 GET /api/public/v1/share/{token}/games/{gameId}
 ```
 
-Trophies:
+Returns base and additional progress separately, group summaries, hydration status, library progress and last deep-trophy sync time. Additional groups never contribute to base platinum status.
+
+### Trophies
 
 ```text
 GET /api/public/v1/share/{token}/games/{gameId}/trophies
@@ -183,60 +126,67 @@ GET /api/public/v1/share/{token}/games/{gameId}/trophies
 ?status=earned|missing|all
 ```
 
-AI context:
+`scope=dlc` currently means all non-base/additional groups. It does not prove that a numbered PSN group was separately purchased DLC.
 
-```text
-GET /api/public/v1/share/{token}/games/{gameId}/ai-context
+For an unearned hidden trophy, public serialization returns:
+
+```json
+{
+  "name": null,
+  "description": null,
+  "icon_url": null,
+  "hidden": true,
+  "spoiler_masked": true,
+  "earned": false
+}
 ```
 
-Planned `ai-context` top-level fields:
+Factual non-spoiler fields such as trophy type, group, rarity and earned rate may remain present. Once the hidden trophy is actually earned, its known metadata may be shown.
 
-```text
-schema_version
-identity
-progress
-missing_trophies
-recent_activity
-sync
-```
+## Public errors
 
-M6 `progress_events` are the intended durable source for `recent_activity` in M8.
-
-The public API will be read-only, capability-token gated, revocable, and non-indexed. Authentication material can never appear in public output.
-
-## Numeric progress honesty
-
-When PSN does not expose a current numeric trophy-progress value, TrophyBridge returns `null` rather than infer one. A target value alone is not enough to invent current progress.
-
-## Freshness and zero-cost behavior
-
-Normal dashboard and future public reads use durable PostgreSQL state. Opening a page must not automatically contact PSN.
-
-Current game refresh is an authenticated explicit action with a 300-second default per-game cooldown, one-running-sync protection, a 100-group ceiling, and a 1,000-trophy ceiling. M6 event detection piggybacks on that transaction and adds no queue, cron, or polling service.
-
-If an upstream refresh fails, the most recent valid factual state remains readable and no new event is created.
-
-## Hidden trophy privacy
-
-The current private owner dashboard may display the factual metadata PSN returns. A future public share must mask spoiler-bearing name/description for unearned hidden trophies unless an explicit share policy permits disclosure.
-
-## Public error envelope
-
-Planned stable envelope:
+Stable M7 envelope:
 
 ```json
 {
   "error": {
-    "code": "PSN_REAUTH_REQUIRED",
-    "message": "The PlayStation connection must be renewed.",
+    "code": "INVALID_SHARE_TOKEN",
+    "message": "Il link TrophyBridge non è valido.",
     "retryable": false
   },
   "request_id": "uuid"
 }
 ```
 
-Initial public codes include `INVALID_SHARE_TOKEN`, `SHARE_LINK_REVOKED`, `GAME_NOT_FOUND`, `PSN_UNAVAILABLE`, `PSN_RATE_LIMITED`, `PSN_REAUTH_REQUIRED`, `SYNC_IN_PROGRESS`, `SYNC_FAILED`, and `INTERNAL_ERROR`.
+Current share codes:
+
+```text
+INVALID_SHARE_TOKEN   404
+SHARE_LINK_REVOKED    410
+GAME_NOT_FOUND        404
+INVALID_REQUEST       400
+STORAGE_ERROR         500
+INTERNAL_ERROR        500
+```
+
+A syntactically valid revoked token resolves to `SHARE_LINK_REVOKED`; an unknown/malformed token does not reveal account existence.
+
+## Numeric progress honesty
+
+When PSN does not expose a verified current numeric trophy-progress value, TrophyBridge returns `null`. A target alone is never used to invent current progress.
+
+## Freshness
+
+M7 public reads are intentionally passive. `capabilities.refresh=false` and `capabilities.ai_context=false` make this explicit.
+
+M8 will add:
+
+```text
+GET /api/public/v1/share/{token}/games/{gameId}/ai-context
+```
+
+and the planned bounded `fresh=1` behavior. The AI client will then be able to request a fresh single-game state without the owner pressing the private sync button. That path must reuse the existing per-game cooldown, one-running-sync protection, size ceilings and last-good fallback. No public endpoint may create unbounded PSN fan-out.
 
 ## Versioning
 
-Breaking public API changes require a new version prefix. Additive fields may be introduced within v1 when existing clients can safely ignore them.
+Breaking public API changes require a new version prefix. Additive fields may be introduced within v1 when clients can safely ignore them.

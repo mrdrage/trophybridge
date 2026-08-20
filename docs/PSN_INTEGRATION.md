@@ -2,21 +2,13 @@
 
 ## Boundary
 
-TrophyBridge treats PlayStation Network as the factual external provider. Application code consumes TrophyBridge-owned `PsnProvider` types rather than raw `psn-api` responses.
+TrophyBridge treats PlayStation Network as the factual external provider and consumes TrophyBridge-owned `PsnProvider` types instead of raw `psn-api` payloads. The pinned adapter is `psn-api` 2.18.1.
 
-M2 implements `PsnApiProvider`. M3 implements the authentication lifecycle that safely creates it. M4-M6 reuse this boundary for library, detailed trophy, and progress-event synchronization.
-
-TrophyBridge does **not** use PSNProfiles or another trophy community site as the source for personal earned state, trophy rarity, or earned-rate percentages.
+TrophyBridge does not use PSNProfiles or another community trophy site as the source for personal earned state, rarity or earned-rate percentages.
 
 ## Locale
 
-The pilot configuration is **Italian**:
-
-```text
-it-IT
-```
-
-`preferred_locale` is persisted on the connected PSN account and passed into `PsnApiProvider`, which propagates it as `Accept-Language` on supported trophy calls. This keeps trophy names/descriptions aligned with the language used in-game when PSN supplies localized metadata.
+The pilot locale is `it-IT`. It is persisted on the connected account and sent through supported trophy requests so names/descriptions match the language used in-game when PSN supplies localization.
 
 ## Provider operations
 
@@ -28,135 +20,94 @@ getTrophies(game)
 getUserTrophies(game)
 ```
 
-The adapter handles pagination, PS5 `trophy2` versus legacy `trophy`, runtime validation, base/additional/unknown group normalization, rarity/earned rate, hidden trophies, and stable provider errors.
+The adapter handles pagination, PS5 `trophy2` versus legacy `trophy`, runtime validation, platform normalization, group classification, hidden trophies, rarity/earned rate and stable provider errors.
 
-## Authentication lifecycle
+## Authentication lifecycle through M7
 
-### Initial connection
+Initial owner connection:
 
 ```text
 NPSSO
-  |
-  v
-exchangeNpssoForAccessCode
-  |
-  v
-exchangeAccessCodeForAuthTokens
-  |
-  +--> short-lived access token
-  |
-  +--> refresh token + provider-reported refresh expiry
-  |
-  v
-resolve stable PSN accountId
-  |
-  v
-getProfileFromAccountId
-  |
-  v
-require isMe=true + matching Online ID
+ -> access code
+ -> access + refresh authorization
+ -> resolve stable target accountId
+ -> getProfileFromAccountId
+ -> require isMe=true + exact Online ID
+ -> discard NPSSO
+ -> encrypt durable refresh credential
 ```
 
-NPSSO is bootstrap-only and is never stored. The access token is not persisted. Only the refresh token is durable, and only after AES-256-GCM encryption.
+Normal synchronization uses the encrypted refresh credential to obtain a short-lived access token. When PlayStation returns a rotated refresh token/lifetime, TrophyBridge persists the new encrypted value and expiry. If the durable credential becomes invalid or expires, current code enters `reauth_required`.
 
-### Refresh
+The provider-reported refresh lifetime is external behavior, not a TrophyBridge constant.
 
-```text
-encrypted refresh credential
-  |
-  v
-decrypt server-side
-  |
-  v
-exchangeRefreshTokenForAuthTokens
-  |
-  +--> access token returned to runtime only
-  |
-  +--> rotated refresh token, if provided
-  |
-  +--> new refresh-token lifetime, if provided
-  |
-  v
-re-encrypt under active key version
-  |
-  v
-persist next refresh expiry
-  |
-  v
-PsnApiProvider({ accessToken, account, locale: "it-IT" })
-```
+## Important authentication research after M6
 
-`psn-api` exposes `refreshTokenExpiresIn` in the PlayStation token response. TrophyBridge converts that duration into `refresh_token_expires_at`. When a refresh response supplies a new lifetime, TrophyBridge moves the stored expiry forward from the refresh time; when it does not, the previously known expiry is retained.
+The current implementation couples two concepts that do not necessarily need to be the same:
 
-This is why NPSSO is **not** required for normal library/game synchronization. The encrypted refresh credential is used instead. A fresh NPSSO is needed only when the durable refresh credential has actually expired, has been rejected/revoked by PlayStation, or otherwise cannot be refreshed. TrophyBridge then moves the connection to `reauth_required`.
+1. **target identity**: the PlayStation account whose trophies TrophyBridge tracks;
+2. **data-access identity**: the authenticated PlayStation account whose token is used to call trophy endpoints.
 
-Provider token lifetimes are external behavior rather than a TrophyBridge constant. The application trusts the lifetime returned by PlayStation instead of hard-coding a promised number of days.
+The PlayStation trophy APIs exposed through the community-documented clients accept a target numeric `accountId`. Their documented behavior allows an authenticated account to retrieve another account's trophy data when that target's privacy settings permit it.
 
-## Provider construction
+That means the long-term TrophyBridge design does not have to assume `mrdrage2` must provide a new NPSSO every time its own refresh credential expires. A future design can keep the target stable account ID while using a separately managed TrophyBridge data-access credential for public/readable trophy data.
 
-`PsnConnectionService.createProviderForOwner(ownerUserId)` is the authentication-to-sync boundary. It obtains fresh short-lived authorization from the encrypted refresh credential, loads the verified stable PSN identity, applies the saved locale, and returns a ready `PsnApiProvider`.
+This is an architectural finding, not proof of how PSNProfiles is implemented. TrophyBridge will not claim access to PSNProfiles' private authentication design.
 
-Library/trophy/event synchronization must use this factory rather than loading or decrypting credentials directly.
+Before adopting the separated-credential model we must validate:
 
-## Connection routes
+- the pilot account's privacy permits all required library/trophy calls;
+- every endpoint needed by TrophyBridge works with target != authenticating account;
+- private/hidden-account behavior remains safe;
+- ownership verification remains independent and cannot be bypassed;
+- service-credential lifecycle and PlayStation terms/security are acceptable;
+- zero-cost operation is preserved.
 
-Authenticated, non-cacheable server routes:
-
-```text
-POST /api/private/v1/psn/connect
-GET  /api/private/v1/psn/status
-POST /api/private/v1/psn/refresh
-POST /api/private/v1/psn/disconnect
-```
-
-The connect request contains `onlineId` and `npsso`. The response never echoes NPSSO or tokens.
-
-## Credential storage
-
-`psn_credentials` is server-only and stores ciphertext, IV, GCM authentication tag, key version, refresh expiry, and refresh timestamp. Browser roles receive no privileges on the table.
-
-Disconnect deletes the credential while leaving normalized factual account/trophy history intact.
+Persisting the owner's NPSSO as a long-term shortcut is rejected. NPSSO remains password-equivalent bootstrap material.
 
 ## Trophy earned-rate provenance
 
-The percentage shown beside a TrophyBridge trophy comes from PlayStation's user-trophy payload through the `trophyEarnedRate` field exposed by `psn-api`.
-
-TrophyBridge maps:
+The percentage shown beside a TrophyBridge trophy originates from PlayStation's `trophyEarnedRate` field returned in user-trophy data.
 
 ```text
-PSN trophyEarnedRate -> PsnUserTrophy.earnedRate -> trophies.earned_rate -> private UI "% giocatori"
+PSN trophyEarnedRate
+ -> PsnUserTrophy.earnedRate
+ -> trophies.earned_rate
+ -> private/public TrophyBridge output
 ```
 
-The companion PSN field `trophyRare` is normalized into `ultra_rare`, `very_rare`, `rare`, `common`, or `unknown`.
-
-No PSNProfiles scrape, community database, or independently calculated sample is involved in this factual percentage. A community site's displayed rate can therefore differ from TrophyBridge because that site may use a different member population or its own update model, while TrophyBridge preserves the rate returned through the PlayStation-facing provider.
+`trophyRare` is normalized into rarity categories. A community site's percentage may differ because it can use a different user population or update model.
 
 ## Trophy groups
 
-Provider normalization remains conservative:
-
 ```text
 default -> base
-001/002/... exactly three digits -> dlc/additional group
+001/002/... -> additional (`dlc` internal enum)
 anything else -> unknown
 ```
 
-The term `dlc` is the current TrophyBridge persistence enum for additional groups. It does not assert that every numbered PlayStation group is commercially sold DLC.
+The internal word `dlc` does not prove commercial DLC ownership or purchase.
 
 ## Numeric trophy-progress limitation
 
-`psn-api` 2.18.1 exposes a PS5 progress target on some trophies but does not expose a verified current numeric value through its user-trophy model. TrophyBridge therefore uses:
+`psn-api` exposes a progress target on some PS5 trophies but not a verified current numeric value through the user-trophy model. TrophyBridge therefore keeps:
 
 ```text
 progressTarget -> provider value when present
-progressValue -> null
-progressPercent -> 100 for earned trophies, otherwise null
+progressValue -> null when unavailable
+progressPercent -> 100 when earned, otherwise null unless verified
 ```
 
-No missing progress is fabricated.
+No missing numeric progress is fabricated.
 
-## Testing and live validation
+## Sync and future no-click freshness
 
-CI does not contact PSN. Provider/auth tests use sanitized/fabricated data and verify identity matching, token rotation, encrypted persistence, credential expiry, snapshot validation, and event behavior without live credentials.
+Through M7, PSN requests happen only after private manual synchronization. M7 public GETs are database-only.
 
-Real validation uses the private dashboard. NPSSO must be entered only there when reauthentication is required and must never be pasted into an issue, commit, log, screenshot, or AI chat.
+M8 will add an AI-optimized `ai-context` route and bounded `fresh=1`. A fresh AI request will be able to invoke the existing one-game sync boundary only when stale and allowed by cooldown/single-flight guards. This lets the assistant refresh trophy state on demand instead of requiring the owner to press `Sincronizza trofei`.
+
+Continuous background polling is not required for this behavior and remains outside the accepted zero-cost design unless later justified.
+
+## Testing
+
+CI never contacts PSN. Provider/auth tests use fabricated data. Live validation is performed only with the private pilot environment. No NPSSO, refresh token, access token or service credential belongs in chat, GitHub, logs or screenshots.
