@@ -1,0 +1,255 @@
+.dashboard-wide {
+  max-width: 1120px;
+}
+
+.dashboard-subtitle {
+  max-width: 720px;
+  margin: 0.85rem 0 0;
+  color: #94a3b8;
+  font-size: 0.96rem;
+  line-height: 1.6;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.metric-card,
+.continue-card,
+.game-card {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.14);
+}
+
+.metric-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 132px;
+  padding: 1.1rem;
+  border-radius: 1rem;
+}
+
+.metric-card > span,
+.metric-card > small {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.metric-card > strong {
+  align-self: end;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 1.35rem;
+  text-overflow: ellipsis;
+}
+
+.metric-card .metric-game-title {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.metric-good {
+  color: #a7f3d0 !important;
+}
+
+.metric-muted {
+  color: #cbd5e1 !important;
+}
+
+.continue-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  padding: 1.4rem;
+  border-radius: 1.25rem;
+}
+
+.continue-card .eyebrow {
+  margin-bottom: 0.45rem;
+}
+
+.continue-card .help {
+  margin-top: 0.45rem;
+}
+
+.dashboard-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.dashboard-two-column .panel {
+  height: 100%;
+}
+
+.share-url-box code {
+  overflow-wrap: anywhere;
+  color: #c7d2fe;
+  font-size: 0.8rem;
+}
+
+.library-search-panel {
+  margin-bottom: 1rem;
+}
+
+.library-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.game-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.game-card {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.15rem;
+  border-radius: 1rem;
+}
+
+.game-card h2 {
+  min-height: 3.2rem;
+  font-size: 1.08rem;
+  line-height: 1.35;
+}
+
+.game-card-topline,
+.game-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.game-card-topline {
+  color: #94a3b8;
+  font-size: 0.76rem;
+}
+
+.game-card-topline strong {
+  color: #c7d2fe;
+}
+
+.game-card-meta {
+  align-items: flex-start;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.game-card .button {
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+.progress-track {
+  width: 100%;
+  height: 0.48rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.13);
+}
+
+.progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #6366f1;
+}
+
+.large-progress {
+  height: 0.65rem;
+  margin-top: 1.5rem;
+}
+
+.empty-state {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.empty-state .help {
+  margin-top: 0.6rem;
+}
+
+.platinum-panel {
+  overflow: hidden;
+}
+
+.optional-sync-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.optional-sync-row > div:first-child {
+  max-width: 680px;
+}
+
+.optional-sync-row strong {
+  color: #f8fafc;
+}
+
+.optional-sync-row .help {
+  margin-top: 0.35rem;
+}
+
+.optional-sync-row .actions {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .metric-grid,
+  .game-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-two-column {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .metric-grid,
+  .game-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .continue-card,
+  .optional-sync-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .library-search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .header-actions {
+    justify-content: flex-end;
+  }
+}
