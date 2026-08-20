@@ -2,249 +2,113 @@
 
 PostgreSQL/Supabase is the factual persistence layer. SQL migrations are the schema source of truth.
 
-## Core ownership and identity
+## Identity and credentials
 
-### `psn_accounts`
+`psn_accounts` stores the verified target PlayStation identity, owner relation, auth state, preferred locale and synchronization timestamps.
 
-One normalized PlayStation identity connected to a TrophyBridge owner in v0.1.
-
-Important fields include internal UUID, Supabase owner user ID, verified PSN Online ID, stable PSN account ID, auth status, preferred locale, and synchronization timestamps.
-
-The browser may read only owner-safe account metadata. Credentials are separate.
-
-### `psn_credentials`
-
-Server-only encrypted durable PlayStation refresh credentials.
-
-NPSSO and PSN access tokens are not persisted. Browser roles cannot read this table.
+`psn_credentials` stores only encrypted durable PSN refresh credential material plus encryption metadata and provider-reported expiry. NPSSO and PSN access tokens are never persisted. Browser roles cannot read this table.
 
 ## Library model
 
-### `games`
+`games` stores normalized provider title identity `(np_communication_id, np_service_name)` and descriptive metadata.
 
-Provider title identity and mutable descriptive metadata.
+`account_games` relates an account to known titles and stores lightweight aggregate progress/counters, hidden state, provider update timestamp and local sync timestamps. M4 snapshots do not delete omitted titles or regress known counters.
 
-Stable identity:
+The first real library import contains 196 titles.
 
-```text
-(np_communication_id, np_service_name)
-```
+## Trophy model
 
-`np_service_name` preserves PS5 `trophy2` versus legacy `trophy` behavior.
+`trophy_groups` stores one normalized group per game. PSN `default` is the structural base group; numbered groups are persisted as additional (`dlc` enum today) without asserting purchase semantics.
 
-### `account_games`
+`trophies` stores game-scoped trophy IDs, localized text, type, hidden flag, image URL, rarity and PlayStation earned-rate metadata.
 
-Relationship between a PSN account and a known title. Stores lightweight aggregate library state such as progress percentage, earned/defined trophy counters, hidden state, provider last-update timestamp, and local seen/sync timestamps.
+`player_trophies` stores account-specific earned state/timestamp and honest progress fields when PSN exposes them. Earned state is monotonic and earliest known earned time is preserved.
 
-M4 snapshots are conservative: missing titles in a later provider response are not deleted and known aggregate counters do not regress.
-
-## Detailed trophy model
-
-### `trophy_groups`
-
-One row per PSN trophy group for a game.
-
-Stable identity:
-
-```text
-(game_id, psn_group_id)
-```
-
-Kinds:
-
-```text
-base
-dlc
-unknown
-```
-
-The PSN group `default` is the one structural base group. Numbered groups such as `001` are additional groups. The internal name `dlc` is a normalized group category and must not be interpreted as proof that content was separately purchased.
-
-Database constraints allow at most one base group per game and require a base group to use `default`.
-
-### `trophies`
-
-One normalized trophy definition per game/trophy ID.
-
-Stable identity:
-
-```text
-(game_id, psn_trophy_id)
-```
-
-Stores group link, localized name/description when available, bronze/silver/gold/platinum type, hidden flag, icon URL, rarity classification, and earned-rate metadata supplied by PlayStation Network.
-
-M5 upserts preserve already-known localized fields when a later provider payload supplies null rather than deleting factual metadata.
-
-### `player_trophies`
-
-Account-specific state for a normalized trophy.
-
-Stores earned state, earned timestamp, numeric progress values when actually available from PSN, and observation timestamps.
-
-Earned state is monotonic. Once a trophy is recorded as earned, a later partial/inconsistent upstream response cannot unearn it. The earliest trustworthy earned timestamp is preserved.
+The real Final Fantasy XVI checkpoint after M6 contains 3 groups, 69 trophies, 69 player rows and 18 earned states.
 
 ## Synchronization model
 
-### `sync_runs`
+`sync_runs` audits bounded library/game work. M6 uses `new_trophies_found` for newly observed earned transitions.
 
-Audit/status records for bounded synchronization work.
+`sync_targets` coordinates per-account/per-game timing. M5/M6 use it with a 300-second default cooldown and one-running-sync protection.
 
-Current sync types used by the application:
+`progress_events` stores meaningful deduplicated activity. The first deep sync is a baseline. Later normal earned transitions create `trophy_earned`; a newly earned platinum also creates `platinum_earned`.
 
-```text
-library
-game
-```
+The first real M6 post-baseline event is the FF16 bronze trophy `Fiamme gemelle`.
 
-M4 enforces one running library sync per account. M5 adds one running game sync per `(psn_account_id, game_id)` target.
+## M7 sharing model
 
-M6 uses the existing `new_trophies_found` column as the number of newly earned trophies detected during a successful game sync. This is a trophy count, not a raw `progress_events` row count, because a platinum transition may create two event rows while still representing one newly earned trophy.
-
-Successful/failed runs record bounded summary/error metadata rather than raw provider exceptions.
-
-### `sync_targets`
-
-Per-account/per-game synchronization timing state. M5 stores `last_sync_at` and `next_allowed_sync_at` after a successful deep trophy snapshot. This table is also the intended coordination point for later public freshness/single-flight behavior.
-
-## M4 atomic library persistence
-
-`persist_library_snapshot(...)` is server-role-only.
-
-It validates bounded normalized game input and atomically upserts `games` + `account_games` while preserving last-good/monotonic library state.
-
-Default application/SQL ceiling:
-
-```text
-2000 titles per library sync
-```
-
-## M5 atomic game-trophy persistence
-
-`persist_game_trophy_snapshot(...)` is server-role-only.
-
-Arguments are the account UUID, selected game UUID, normalized group/title/user-trophy JSON arrays, observation timestamp, and next-allowed timestamp.
-
-The function refuses persistence unless:
-
-- the selected game already belongs to the account through `account_games`;
-- inputs are JSON arrays;
-- groups are at most 100 and trophy/user rows at most 1,000;
-- group IDs are unique;
-- title trophy IDs are unique;
-- user trophy IDs are unique;
-- there is exactly one `default` base group and no other base group;
-- total group-defined trophy count equals the title trophy count;
-- title trophy count equals user-trophy count;
-- each title trophy references a returned group;
-- every user trophy has a matching title trophy ID/type.
-
-The TypeScript service additionally validates each group's actual bronze/silver/gold/platinum distribution against `definedTrophies`, so a truncated provider response is rejected before the SQL function is called.
-
-On success the transaction upserts:
-
-```text
-trophy_groups
-trophies
-player_trophies
-sync_targets
-psn_accounts.last_successful_sync_at
-```
-
-No deep snapshot deletes existing trophy rows. Failed/incomplete PSN responses therefore leave last-good state intact.
-
-## M6 event-aware game persistence
-
-`persist_game_trophy_snapshot_with_events(...)` is an additive server-only wrapper around the M5 persistence function.
-
-Additional argument:
-
-```text
-p_sync_run_id
-```
-
-The wrapper first requires that this ID is the currently `running` `game` sync for the same PSN account and game. Before delegating to M5 persistence, it captures incoming trophies that satisfy both conditions:
-
-```text
-existing durable player_trophies.earned = false
-incoming validated PSN state.earned = true
-```
-
-Because no `player_trophies` row exists before a game's first deep sync, that initial import automatically becomes the baseline and produces no historical trophy events.
-
-After the M5 snapshot succeeds inside the same PostgreSQL transaction, M6 inserts:
-
-```text
-trophy_earned
-platinum_earned   # only in addition to trophy_earned for a newly earned platinum
-```
-
-The wrapper returns all M5 summary counts plus:
-
-```text
-new_trophies_found
-```
-
-A failure anywhere in the wrapper rolls back both the delegated factual snapshot and event creation.
-
-## Progress-event model
-
-### `progress_events`
-
-Durable observed activity tied to the sync run that detected it.
+`share_links` becomes active product state in M7.
 
 Important fields:
 
 ```text
+id
 psn_account_id
-game_id
-trophy_id
-event_type
-occurred_at
-detected_at
-sync_run_id
+token_hash
+label
+is_active
+created_at
+last_used_at
+revoked_at
 ```
 
-M6 currently emits:
+The plaintext capability token is **never** stored. Application code generates 256 random bits, formats the bearer token as `tb1_...`, hashes the complete token with SHA-256, and persists only the 64-character hexadecimal hash.
+
+M7 adds a partial unique index so each PSN account can have at most one active capability:
 
 ```text
-trophy_earned
-platinum_earned
+share_links_one_active_per_account_idx
+WHERE is_active = true
 ```
 
-`occurred_at` uses PSN's earned timestamp when available and otherwise falls back to the sync timestamp. `detected_at` is the sync timestamp.
+The revocation-state constraint requires active rows to have `revoked_at IS NULL` and inactive rows to have a revocation timestamp.
 
-Uniqueness rules inherited from M1 ensure one `trophy_earned` and one `platinum_earned` event at most for a given account/trophy. Replaying an identical earned snapshot therefore creates no duplicate history.
+Server-only RPCs:
 
-The schema still permits `game_discovered`; M6 does not backfill 196 historical library discoveries because fabricated historical chronology is deliberately avoided.
+```text
+rotate_account_share_link(...)
+revoke_account_share_link(...)
+```
 
-## Sharing model
+Rotation atomically revokes the previous active row and inserts the new token hash. Revocation changes only sharing state; factual account/game/trophy data remains untouched.
 
-### `share_links`
+The functions are executable by `service_role` only. `anon` and `authenticated` cannot invoke them.
 
-Schema-ready capability links for future public read-only access. M7 activates issuance/revocation and public routes.
+`last_used_at` is non-factual access metadata. Public reads may update it best-effort at a coarse interval; a telemetry write failure must not make a valid share read fail.
+
+## Public serialization model
+
+The database is not exposed directly. The M7 server reads durable state and creates allowlisted DTOs.
+
+Public data includes online ID, visible library game state, game/group summary and trophy facts. It excludes stable PSN numeric account IDs, TrophyBridge credential material and hidden library titles.
+
+For `hidden=true && earned=false`, trophy name, description and icon are masked at serialization time. The stored private factual row is not modified.
+
+## Persistence functions
+
+`persist_library_snapshot(...)` is the server-only M4 atomic lightweight library writer.
+
+`persist_game_trophy_snapshot(...)` is the M5 bounded atomic trophy writer.
+
+`persist_game_trophy_snapshot_with_events(...)` is the M6 wrapper that detects transitions and delegates the factual snapshot write within the same transaction.
+
+M7 adds only share-management functions and does not modify factual trophy persistence.
 
 ## RLS and privilege boundary
 
-Domain tables have RLS enabled. Most factual tables remain deny-by-default to browser roles and are accessed by server-side trusted repositories until the public API introduces explicit allowlisted server reads.
+Domain tables have RLS enabled. Sensitive and factual tables remain deny-by-default to browser roles unless an explicit owner-safe policy exists. Public sharing does not create an anonymous RLS policy; the Next.js server resolves the capability and performs an allowlisted read through the trusted server client.
 
-Privileged persistence functions are revoked from `public`, `anon`, and `authenticated` and granted only to `service_role`.
-
-M6 integration tests verify the event-aware wrapper is not executable by `authenticated` and is executable by `service_role`.
-
-## Production checkpoint, 2026-08-19
-
-After the live M5 Final Fantasy XVI baseline smoke and before M6 event detection is exercised on a newly earned trophy:
+## Production checkpoint after M7 migration
 
 ```text
 games: 196
 account_games: 196
-FINAL FANTASY XVI trophy_groups: 3
-FINAL FANTASY XVI trophies: 69
-FINAL FANTASY XVI player_trophies: 69
-FINAL FANTASY XVI earned player_trophies: 17
-progress_events: 0
-successful game sync runs: 1
+Final Fantasy XVI groups/trophies/player rows/earned: 3 / 69 / 69 / 18
+progress_events: 1
+share_links immediately after migration: 0
+active share links immediately after migration: 0
+rotate/revoke RPC: service_role yes, authenticated no
 ```
 
-The empty event table at this checkpoint is intentional. M6 starts observing new activity from the existing M5 durable baseline rather than inventing history for the 17 trophies that were already earned.
+M7 migration therefore adds sharing capability without manufacturing a public token or altering trophy state.
