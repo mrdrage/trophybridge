@@ -33,10 +33,10 @@ First end-to-end TrophyBridge MVP.
 - Normal AI usage no longer requires the owner to press the private trophy-sync button; manual game refresh remains only an optional fallback.
 - JSON capability endpoints are explicitly presented as machine interfaces while the owner uses the visual dashboard.
 - The normal production origin is now `https://trophybridge.vercel.app`; localhost remains development-only.
-- PSN refresh handling distinguishes a known expiry on the current token from an obsolete expiry belonging to a replaced token.
-- If Sony rotates the refresh token without returning a new `refresh_token_expires_in`, TrophyBridge stores the replacement with unknown local expiry rather than manufacturing a reauthentication date.
-- TrophyBridge no longer claims that this creates perpetual PSN authorization: genuine Sony expiry/revocation can still require reauthentication.
-- No claim is made about PSNProfiles' private implementation; a separate PSN data-access identity remains an optional follow-up experiment if recurring owner reauthentication persists.
+- PSN refresh handling treats a provider-reported refresh-token expiry as advisory rather than a local kill switch: TrophyBridge attempts the durable credential with PSN before deciding that reauthentication is required.
+- If PSN accepts a credential after its recorded local expiry, TrophyBridge discards that stale deadline; if Sony rotates the refresh token without returning a new `refresh_token_expires_in`, the replacement is likewise stored with unknown local expiry.
+- A new NPSSO is requested only when PSN actually rejects the durable refresh credential or when no usable credential exists. TrophyBridge still does not claim that Sony guarantees perpetual authorization.
+- No claim is made about PSNProfiles' private implementation; a separate PSN data-access identity remains an optional follow-up experiment only if Sony eventually proves to reject the owner's durable credential recurrently.
 
 ### Security
 
