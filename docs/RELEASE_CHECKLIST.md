@@ -47,6 +47,9 @@ Known advisory: Supabase reports leaked-password protection disabled. TrophyBrid
 - [x] AI freshness uses a database-backed per-share hourly claim budget.
 - [x] Provider failures preserve/serve last-good factual state when available.
 - [x] Public API errors do not expose raw provider/database exceptions.
+- [x] A provider-reported refresh-token expiry is advisory; TrophyBridge asks PSN before requiring reauthentication.
+- [x] A successful refresh after a stale local expiry clears that obsolete deadline.
+- [x] Genuine PSN rejection still clears the unusable credential and requests reauthentication.
 
 ## Cost
 
@@ -69,10 +72,12 @@ Known advisory: Supabase reports leaked-password protection disabled. TrophyBrid
 - [x] PostgreSQL migration/domain invariant tests.
 - [x] Playwright smoke test including M10 headers/robots assertions.
 
-## PSN authorization limitation
+## PSN authorization boundary
 
-The M9 correction removes TrophyBridge's false refresh-token expiry inheritance but does not establish an indefinitely renewable public PSN authorization flow. A real Sony expiry/revocation can still require reauthentication. TrophyBridge intentionally does not persist the owner's NPSSO/password. If recurring target-owner reauthentication remains a practical problem, the supported next experiment is a separate PSN data-access identity tested against the verified target account.
+TrophyBridge no longer contains a fixed or locally enforced ten-day reauthentication rule. The stored expiry reported during bootstrap is retained only as metadata. Even after that timestamp, TrophyBridge attempts the encrypted durable refresh credential with PlayStation. If PSN accepts it, the app continues normally and removes a stale local deadline; if PSN genuinely rejects it, owner reauthentication may still be necessary.
+
+TrophyBridge intentionally does not persist the owner's NPSSO/password. A separate PSN data-access identity remains an optional experiment only if real production observation later shows recurrent Sony-side credential rejection. PSNProfiles' private implementation is unknown and is not treated as an architectural specification.
 
 ## Release outcome
 
-M0-M10 satisfy the TrophyBridge v0.1 MVP definition. Remaining work is operational maintenance, provider compatibility, optional UX/product improvements, and the separate PSN service-identity experiment if needed.
+M0-M10 satisfy the TrophyBridge v0.1 MVP definition. Remaining work is operational maintenance, provider compatibility and optional product evolution rather than a missing milestone.
