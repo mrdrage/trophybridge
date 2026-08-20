@@ -82,8 +82,8 @@ export function SharePanel({
     <section className="panel">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">M7 · Public Share</p>
-          <h2>Link pubblico per AI</h2>
+          <p className="eyebrow">Ponte AI</p>
+          <h2>Accesso read-only</h2>
         </div>
         <span className={`badge ${status.active ? "good" : "muted"}`}>
           {status.active ? "Attivo" : "Non attivo"}
@@ -91,17 +91,17 @@ export function SharePanel({
       </div>
 
       <p className="help">
-        Il link è una capability read-only: chi lo possiede può leggere i giochi visibili e i
-        trofei già sincronizzati. I giochi nascosti vengono esclusi e i trofei segreti non
-        ottenuti sono mascherati.
+        Questo URL è fatto per ChatGPT e altri client, quindi aprendolo nel browser vedrai JSON:
+        è corretto. Nel deploy Internet, lo stesso link sarà raggiungibile da una nuova chat e
+        potrà usare M8 <code>fresh=1</code> per aggiornare automaticamente il gioco richiesto.
       </p>
 
       {status.active && !shareUrl && (
         <div className="connection-meta">
-          <strong>Link attivo</strong>
+          <strong>Capability attiva</strong>
           <span>
-            Il token non è memorizzato in chiaro. Se non hai più l’URL, rigenerala: quella
-            precedente verrà revocata automaticamente.
+            Il token non è memorizzato in chiaro. Se non hai più l&apos;URL, rigeneralo: quello
+            precedente verrà revocato automaticamente.
           </span>
         </div>
       )}
@@ -109,7 +109,7 @@ export function SharePanel({
       {shareUrl && (
         <div className="connection-meta share-url-box">
           <strong>URL pubblico</strong>
-          <code style={{ overflowWrap: "anywhere" }}>{shareUrl}</code>
+          <code>{shareUrl}</code>
         </div>
       )}
 

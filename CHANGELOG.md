@@ -16,42 +16,41 @@ All notable TrophyBridge changes are documented here. Public semantic-versioned 
 - M6 baseline-aware progress events and first real post-baseline event, Final Fantasy XVI `Fiamme gemelle`, moving live earned state from 17 to 18.
 - M7 256-bit `tb1_...` public capabilities, SHA-256-only persistence, atomic rotation/revocation, owner share panel and read-only public game/trophy endpoints.
 - M7 exclusion of hidden library titles, spoiler masking for unearned hidden trophies, non-cacheable/non-indexed response headers and stable public errors.
-- M8 `GET /api/public/v1/share/{token}/games/{gameId}/ai-context` with factual identity, base platinum progress, bounded missing base trophies, recent activity and sync metadata.
-- M8 `fresh=1` single-game on-demand freshness path reusing `TrophySyncService` and its existing 300-second cooldown, single-flight lock and snapshot limits.
-- M8 atomic per-share AI refresh budget, default 12 stale refresh claims/hour, service-role-only PostgreSQL claim function and revoked-share rejection.
-- M8 last-good fallback when requested PSN refresh cannot complete but a durable trophy snapshot already exists.
-- M8 unit/PostgreSQL coverage for no-refresh reads, successful stale refresh, budget exhaustion, reauthentication fallback and atomic quota windows.
+- M8 AI context endpoint, bounded `fresh=1` single-game refresh, per-share hourly refresh budget and last-good fallback.
+- M9 owner command-center dashboard with PSN/share/library summary and recent-game continuation.
+- M9 searchable full-library page and redesigned Platinum-focused game detail.
+- M9 migration allowing `psn_credentials.refresh_token_expires_at` to be unknown after a provider token rotation that omits a new lifetime.
+- M9 tests proving a rotated refresh token without a new expiry does not inherit the previous token's absolute expiry.
 - ADR 0014 documenting hashed revocable bearer capability sharing.
 - ADR 0015 documenting bounded AI-triggered freshness.
 
 ### Changed
 
-- Public discovery now advertises `ai_context=true` and `refresh=true`.
-- Normal AI usage no longer requires the owner to press the private trophy-sync button: an AI client may request freshness on the one game it is using.
-- Fresh-enough `fresh=1` requests are database-only and do not contact PSN.
-- AI context embeds at most 200 missing base trophies by default; the normal filtered trophy endpoint remains the complete factual source.
-- Public refresh failures preserve availability by serving last-good cached state with explicit refresh outcome metadata.
-- PSN integration documentation distinguishes target PSN identity from authenticating data-access identity. A future controlled test will evaluate a separate TrophyBridge PSN read credential to remove recurring target-owner NPSSO entry.
+- Normal AI usage no longer requires the owner to press the private trophy-sync button; manual game refresh remains only an optional fallback.
+- JSON capability endpoints are explicitly presented as machine interfaces while the owner uses the M9 visual dashboard.
+- Library browsing remains bounded but the owner can now search all current pilot titles in one view.
+- PSN refresh handling now distinguishes a known expiry on the current token from an obsolete expiry belonging to a replaced token.
+- If Sony rotates the refresh token without returning a new `refresh_token_expires_in`, TrophyBridge stores the new encrypted token with unknown local expiry and lets PSN determine validity on the next refresh.
+- A new NPSSO is therefore no longer scheduled merely because the original refresh token had a roughly 10-day lifetime; it is required only when PSN genuinely rejects/revokes authorization or a known current token expires.
 - No claim is made about PSNProfiles' private implementation.
-- Roadmap advances to M9 Dashboard after M8.
+- Roadmap advances to hosted M9 activation and then M10 hardening/final validation.
 
 ### Security
 
 - NPSSO and PSN access tokens remain non-persistent; refresh tokens remain encrypted server-side.
+- Unknown local refresh-token expiry does not mean unauthenticated access: every subsequent refresh still goes to PSN and can be rejected by Sony.
 - Public capability plaintext remains returned only to the generating owner session; PostgreSQL stores only its hash.
-- Public/anon/authenticated roles cannot execute share mutation or M8 AI refresh-budget RPCs.
+- Public/anon/authenticated roles cannot execute share mutation or AI refresh-budget RPCs.
 - Revoked capabilities cannot claim new PSN refresh work.
 - Hidden games remain excluded and unearned hidden trophy name/description/icon remain masked.
-- Tokenized responses remain `no-store`, non-indexed, `no-referrer` and `nosniff`.
-- A leaked capability has bounded upstream-work impact because stale AI refresh claims are quota-limited and still pass through per-game synchronization gates.
 
 ### Cost controls
 
 - Library sync: minimum one-hour interval, maximum 2,000 titles.
 - Game sync: five-minute default cooldown, maximum 100 groups/1,000 trophies, one running sync/account/game.
 - AI-context freshness: ten-minute default freshness threshold, 12 stale refresh claims/hour/share, maximum one game/request.
-- M8 is demand-driven and introduces no cron, queue, background worker, Redis, VPS, image mirroring or new paid dependency.
-- Accepted hosted target remains Supabase Free + public GitHub/standard Actions + Vercel Hobby.
+- M9 dashboard and refresh-rotation fix introduce no queue, cron, worker, Redis, VPS, image mirroring or paid dependency.
+- Hosted target remains Supabase Free + public GitHub/standard Actions + Vercel Hobby.
 
 ## [0.1.0] - Unreleased
 

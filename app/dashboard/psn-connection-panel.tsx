@@ -8,6 +8,14 @@ interface SafeAccount {
   preferredLocale: string;
 }
 
+function statusLabel(status: string | undefined): string {
+  if (status === "connected") return "Connesso";
+  if (status === "refreshing") return "Aggiornamento";
+  if (status === "reauth_required") return "Da ricollegare";
+  if (status === "error") return "Da controllare";
+  return "Non collegato";
+}
+
 export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAccount | null }) {
   const [account, setAccount] = useState(initialAccount);
   const [onlineId, setOnlineId] = useState(initialAccount?.onlineId ?? "");
@@ -51,7 +59,7 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
 
   async function refresh() {
     const ok = await request("/api/private/v1/psn/refresh");
-    if (ok) setMessage("Autorizzazione PlayStation aggiornata.");
+    if (ok) setMessage("Autorizzazione PlayStation aggiornata e rotazione automatica verificata.");
   }
 
   async function disconnect() {
@@ -69,7 +77,7 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
           <h2>Connessione PSN</h2>
         </div>
         <span className={`badge ${connected ? "good" : "muted"}`}>
-          {account?.authStatus ?? "non collegato"}
+          {statusLabel(account?.authStatus)}
         </span>
       </div>
 
@@ -77,6 +85,13 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
         <div className="connection-meta">
           <strong>{account.onlineId}</strong>
           <span>Trofei: Italiano · {account.preferredLocale}</span>
+          {connected && (
+            <span>
+              Rinnovo gestito dal server: i refresh token ruotati non ereditano più una vecchia
+              scadenza. Un nuovo NPSSO sarà richiesto solo se PlayStation rifiuta davvero la
+              credenziale corrente.
+            </span>
+          )}
         </div>
       )}
 
@@ -108,8 +123,9 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
             />
           </label>
           <p className="help">
-            L&apos;NPSSO viene usato una sola volta dal server per verificare il tuo account.
-            Non viene salvato. TrophyBridge conserva solo il refresh token cifrato.
+            L&apos;NPSSO serve solo per il bootstrap o per una vera revoca da parte di Sony.
+            Non viene salvato. TrophyBridge conserva esclusivamente la credenziale di refresh
+            cifrata e la ruota automaticamente quando PSN ne restituisce una nuova.
           </p>
           <button className="button primary" type="submit" disabled={busy}>
             {busy ? "Connessione…" : "Collega PlayStation"}
@@ -120,7 +136,7 @@ export function PsnConnectionPanel({ initialAccount }: { initialAccount: SafeAcc
       {connected && (
         <div className="actions">
           <button className="button" type="button" onClick={refresh} disabled={busy}>
-            Verifica connessione
+            Verifica rinnovo
           </button>
           <button className="button danger" type="button" onClick={disconnect} disabled={busy}>
             Disconnetti PSN

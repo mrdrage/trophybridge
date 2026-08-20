@@ -206,7 +206,7 @@ export class SupabaseLibraryRepository implements LibraryRepository {
   }
 
   async getOverview(psnAccountId: string, limit = 12): Promise<LibraryOverview> {
-    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 50);
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 250);
     const { data, error, count } = await this.client
       .from("account_games")
       .select(overviewSelect, { count: "exact" })

@@ -20,6 +20,11 @@ function formatDate(value: string | null): string {
   });
 }
 
+function completion(earned: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((earned / total) * 100);
+}
+
 export default async function GameTrophyPage({
   params,
 }: {
@@ -38,66 +43,76 @@ export default async function GameTrophyPage({
   const detail = await createTrophyRepository().getGameDetail(account.id, parsedGameId.data);
   if (!detail) notFound();
 
+  const baseCompletion = completion(detail.base.earnedCount, detail.base.totalCount);
+
   return (
-    <main className="shell dashboard-shell">
+    <main className="shell dashboard-shell dashboard-wide">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M6</p>
+          <p className="eyebrow">M9 · Dettaglio gioco</p>
           <h1 className="section-title game-title">{detail.title}</h1>
-          <p className="help game-platforms">
+          <p className="dashboard-subtitle">
             {detail.platforms.join(" · ") || "Piattaforma non disponibile"}
           </p>
         </div>
-        <Link className="button" href="/dashboard">Libreria</Link>
+        <div className="header-actions">
+          <Link className="button" href="/dashboard/library">Libreria</Link>
+          <Link className="button" href="/dashboard">Dashboard</Link>
+        </div>
       </header>
 
-      <section className="panel">
+      <section className="panel platinum-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Sincronizzazione trofei</p>
-            <h2>Stato del gioco</h2>
+            <p className="eyebrow">Percorso al Platino</p>
+            <h2>{baseCompletion}% del base game</h2>
           </div>
-          <span className={`badge ${detail.lastTrophySyncAt ? "good" : "muted"}`}>
-            {detail.lastTrophySyncAt ? "Sincronizzato" : "Da importare"}
+          <span className={`badge ${detail.base.platinumEarned > 0 ? "good" : "muted"}`}>
+            {detail.base.platinumEarned > 0 ? "Platino ottenuto" : "In corso"}
           </span>
+        </div>
+
+        <div className="progress-track large-progress" aria-hidden="true">
+          <span style={{ width: `${baseCompletion}%` }} />
         </div>
 
         <div className="trophy-summary-grid">
           <div className="trophy-summary-card">
             <span>Base game</span>
             <strong>{detail.base.earnedCount}/{detail.base.totalCount}</strong>
-            <small>
-              Platino {detail.base.platinumEarned}/{detail.base.platinumTotal}
-            </small>
+            <small>Conta per il percorso principale</small>
           </div>
           <div className="trophy-summary-card">
             <span>Aggiuntivi</span>
             <strong>{detail.additional.earnedCount}/{detail.additional.totalCount}</strong>
-            <small>Esclusi dal percorso platino</small>
+            <small>Separati dal Platino</small>
           </div>
           <div className="trophy-summary-card">
-            <span>Ultimo sync</span>
+            <span>Ultimo dato PSN</span>
             <strong className="summary-date">{formatDate(detail.lastTrophySyncAt)}</strong>
-            <small>Solo su richiesta</small>
+            <small>M8 può aggiornarlo per l&apos;AI</small>
           </div>
         </div>
 
-        <div className="actions trophy-sync-actions">
-          <TrophySyncButton gameId={detail.gameId} />
+        <div className="optional-sync-row">
+          <div>
+            <strong>Aggiornamento automatico attivo</strong>
+            <p className="help">
+              Durante l&apos;uso con ChatGPT, <code>ai-context?fresh=1</code> aggiorna questo gioco
+              quando serve. Il pulsante qui sotto resta solo come controllo manuale.
+            </p>
+          </div>
+          <div className="actions trophy-sync-actions">
+            <TrophySyncButton gameId={detail.gameId} />
+          </div>
         </div>
-
-        <p className="help">
-          M6 confronta ogni nuovo snapshot con lo stato già salvato. Il primo import di un
-          gioco crea solo la baseline; i trofei già ottenuti in passato non vengono falsamente
-          segnalati come nuovi.
-        </p>
       </section>
 
       <section className="panel trophy-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Attività recente</p>
-            <h2>Nuovi trofei rilevati</h2>
+            <h2>Trofei rilevati da TrophyBridge</h2>
           </div>
           <span className={`badge ${detail.recentEvents.length > 0 ? "good" : "muted"}`}>
             {detail.recentEvents.length}
@@ -105,10 +120,7 @@ export default async function GameTrophyPage({
         </div>
 
         {detail.recentEvents.length === 0 ? (
-          <p className="notice">
-            Nessun nuovo trofeo rilevato dopo la baseline. Al prossimo trofeo ottenuto, un sync
-            creerà qui l&apos;evento corrispondente.
-          </p>
+          <p className="notice">Nessun nuovo trofeo rilevato dopo la baseline.</p>
         ) : (
           <div className="trophy-list">
             {detail.recentEvents.map((event) => (
@@ -136,8 +148,8 @@ export default async function GameTrophyPage({
       <section className="panel trophy-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Trofei</p>
-            <h2>Base e gruppi aggiuntivi</h2>
+            <p className="eyebrow">Lista trofei</p>
+            <h2>Base game e contenuti aggiuntivi</h2>
           </div>
           <span className={`badge ${detail.trophies.length > 0 ? "good" : "muted"}`}>
             {detail.trophies.length}
@@ -145,9 +157,7 @@ export default async function GameTrophyPage({
         </div>
 
         {detail.trophies.length === 0 ? (
-          <p className="notice">
-            I dettagli non sono ancora stati importati. Premi “Sincronizza trofei”.
-          </p>
+          <p className="notice">I dettagli del gioco non sono ancora stati importati.</p>
         ) : (
           <div className="trophy-list">
             {detail.trophies.map((trophy) => (
@@ -157,13 +167,16 @@ export default async function GameTrophyPage({
                 </div>
                 <div className="trophy-copy">
                   <div className="trophy-heading-line">
-                    <strong>{trophy.name ?? (trophy.hidden ? "Trofeo nascosto" : `Trofeo #${trophy.psnTrophyId}`)}</strong>
+                    <strong>
+                      {trophy.name ??
+                        (trophy.hidden ? "Trofeo nascosto" : `Trofeo #${trophy.psnTrophyId}`)}
+                    </strong>
                     <span className="trophy-type">{trophy.type}</span>
                   </div>
                   {trophy.description && <p>{trophy.description}</p>}
                   <small>
                     {trophy.groupKind === "base" ? "Base game" : `Gruppo ${trophy.groupId}`}
-                    {trophy.earnedRate != null ? ` · ${trophy.earnedRate}% giocatori` : ""}
+                    {trophy.earnedRate != null ? ` · ${trophy.earnedRate}% giocatori PSN` : ""}
                     {trophy.earnedAt ? ` · ottenuto ${formatDate(trophy.earnedAt)}` : ""}
                   </small>
                 </div>

@@ -111,7 +111,10 @@ export class PsnConnectionService {
     }
 
     const now = this.now();
-    if (new Date(credential.refreshTokenExpiresAt).getTime() <= now.getTime()) {
+    if (
+      credential.refreshTokenExpiresAt &&
+      new Date(credential.refreshTokenExpiresAt).getTime() <= now.getTime()
+    ) {
       await this.repository.clearCredential(account.id);
       await this.repository.setAuthStatus(account.id, "reauth_required");
       throw new PsnConnectionError("REAUTH_REQUIRED");
@@ -132,8 +135,15 @@ export class PsnConnectionService {
 
     try {
       const refreshed = await this.authClient.refresh(refreshToken);
+      const tokenRotated =
+        refreshed.refreshToken != null && refreshed.refreshToken !== refreshToken;
       const durableRefreshToken = refreshed.refreshToken ?? refreshToken;
-      const nextExpiry = this.refreshExpiry(now, credential, refreshed.refreshTokenExpiresIn);
+      const nextExpiry = this.refreshExpiry(
+        now,
+        credential,
+        refreshed.refreshTokenExpiresIn,
+        tokenRotated,
+      );
       const envelope = this.cipher.encrypt(durableRefreshToken, credentialAad(account));
 
       await this.repository.saveCredential({
@@ -186,10 +196,18 @@ export class PsnConnectionService {
     now: Date,
     credential: PsnCredentialRecord,
     refreshTokenExpiresIn: number | null,
-  ): string {
+    tokenRotated: boolean,
+  ): string | null {
     if (refreshTokenExpiresIn != null) {
       return addSeconds(now, refreshTokenExpiresIn);
     }
+
+    // Sony can return a brand-new refresh token without repeating an expiry.
+    // The old absolute expiry belongs to the old token, so inheriting it would
+    // make TrophyBridge falsely demand a new NPSSO after that old date.
+    // With a rotated token and unknown lifetime, defer validity to PSN itself.
+    if (tokenRotated) return null;
+
     return credential.refreshTokenExpiresAt;
   }
 }
