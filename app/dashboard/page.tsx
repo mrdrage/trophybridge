@@ -3,10 +3,12 @@ import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth/require-user";
 import { createLibraryRepository } from "@/lib/library/runtime";
 import { createPsnAuthRepository } from "@/lib/psn/runtime";
+import { createShareService } from "@/lib/sharing/runtime";
 
 import { signOut } from "./actions";
 import { LibraryPanel } from "./library-panel";
 import { PsnConnectionPanel } from "./psn-connection-panel";
+import { SharePanel } from "./share-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +28,15 @@ export default async function DashboardPage() {
   const overview = account
     ? await createLibraryRepository().getOverview(account.id, 12)
     : { totalCount: 0, games: [] };
+  const shareStatus = account
+    ? await createShareService().getOwnerStatus(user.id)
+    : { active: false, createdAt: null, lastUsedAt: null };
 
   return (
     <main className="shell dashboard-shell">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M6</p>
+          <p className="eyebrow">TrophyBridge · M7</p>
           <h1 className="section-title">PlayStation</h1>
         </div>
         <form action={signOut}>
@@ -40,6 +45,10 @@ export default async function DashboardPage() {
       </header>
 
       <PsnConnectionPanel initialAccount={safeAccount} />
+      <SharePanel
+        initialStatus={shareStatus}
+        connected={account?.authStatus === "connected"}
+      />
       <LibraryPanel
         initialOverview={overview}
         connected={account?.authStatus === "connected"}
