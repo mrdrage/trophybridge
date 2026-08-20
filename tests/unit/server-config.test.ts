@@ -32,17 +32,27 @@ describe("server configuration", () => {
     );
   });
 
-  it("requires an explicit application URL in production", () => {
+  it("uses the Vercel production project origin when APP_URL is not configured", () => {
+    expect(
+      getAppUrl({
+        NODE_ENV: "production",
+        VERCEL_PROJECT_PRODUCTION_URL: "trophybridge.vercel.app",
+      } as NodeJS.ProcessEnv),
+    ).toBe("https://trophybridge.vercel.app");
+  });
+
+  it("still requires a canonical production origin away from Vercel", () => {
     expect(() => getAppUrl({ NODE_ENV: "production" } as NodeJS.ProcessEnv)).toThrow(
       "APP_URL is required",
     );
   });
 
-  it("normalizes an explicit application URL to its origin", () => {
+  it("prefers and normalizes an explicit application URL", () => {
     expect(
       getAppUrl({
         NODE_ENV: "production",
         APP_URL: "https://trophybridge.example/dashboard",
+        VERCEL_PROJECT_PRODUCTION_URL: "ignored.vercel.app",
       } as NodeJS.ProcessEnv),
     ).toBe("https://trophybridge.example");
   });
