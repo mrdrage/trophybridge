@@ -57,8 +57,8 @@ export function LibraryPanel({
     <section className="panel">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Libreria PlayStation</p>
-          <h2>Giochi sincronizzati</h2>
+          <p className="eyebrow">Attività recente</p>
+          <h2>Ultimi giochi PlayStation</h2>
         </div>
         <span className={`badge ${initialOverview.totalCount > 0 ? "good" : "muted"}`}>
           {initialOverview.totalCount}
@@ -66,24 +66,24 @@ export function LibraryPanel({
       </div>
 
       <p className="help">
-        M4 mantiene leggera la libreria. Apri un singolo gioco per sincronizzare in M5 gruppi,
-        trofei e stato ottenuto senza idratare tutta la collezione.
+        Il normale aggiornamento dei trofei non richiede più questo pannello: M8 permette
+        all&apos;AI di chiedere automaticamente uno stato fresco del singolo gioco. Il pulsante
+        libreria resta come controllo manuale per scoprire subito nuovi titoli.
       </p>
 
       <div className="actions">
+        <Link className="button primary" href="/dashboard/library">Apri tutta la libreria</Link>
         <button
-          className="button primary"
+          className="button"
           type="button"
           onClick={syncLibrary}
           disabled={!connected || busy}
         >
-          {busy ? "Sincronizzazione…" : "Sincronizza libreria"}
+          {busy ? "Aggiornamento…" : "Aggiorna libreria"}
         </button>
       </div>
 
-      {!connected && (
-        <p className="notice">Collega prima il tuo account PlayStation.</p>
-      )}
+      {!connected && <p className="notice">Collega prima il tuo account PlayStation.</p>}
 
       {initialOverview.games.length > 0 && (
         <div className="library-list">
@@ -103,11 +103,6 @@ export function LibraryPanel({
               </div>
             </article>
           ))}
-          {initialOverview.totalCount > initialOverview.games.length && (
-            <p className="help">
-              Mostrati gli ultimi {initialOverview.games.length} di {initialOverview.totalCount} giochi.
-            </p>
-          )}
         </div>
       )}
 
