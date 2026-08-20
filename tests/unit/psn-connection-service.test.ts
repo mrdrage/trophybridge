@@ -53,8 +53,8 @@ class MemoryRepository implements PsnAuthRepository {
   }
 }
 
-function authCalls(): PsnAuthCalls {
-  return {
+function authCalls(overrides: Partial<PsnAuthCalls> = {}): PsnAuthCalls {
+  const calls: PsnAuthCalls = {
     exchangeNpssoForAccessCode: async () => "access-code",
     exchangeAccessCodeForAuthTokens: async () => ({
       accessToken: "access-token",
@@ -78,11 +78,17 @@ function authCalls(): PsnAuthCalls {
     }),
     getProfileFromAccountId: async () => ({ onlineId: "mrdrage2", isMe: true }),
   };
+
+  return { ...calls, ...overrides };
 }
 
-function service(repository: MemoryRepository, now = new Date("2026-08-19T10:00:00Z")) {
+function service(
+  repository: MemoryRepository,
+  now = new Date("2026-08-19T10:00:00Z"),
+  calls: PsnAuthCalls = authCalls(),
+) {
   return new PsnConnectionService(
-    new PsnAuthClient(authCalls()),
+    new PsnAuthClient(calls),
     repository,
     new TokenCipher(new Map([[1, Buffer.alloc(32, 9)]]), 1),
     "it-IT",
@@ -119,10 +125,33 @@ describe("PsnConnectionService", () => {
     expect(session.accessToken).toBe("new-access");
     expect(repository.account?.authStatus).toBe("connected");
     expect(repository.credential?.ciphertext).not.toBe(before);
+    expect(repository.credential?.refreshTokenExpiresAt).toBe("2026-08-21T10:00:00.000Z");
     expect(JSON.stringify(repository)).not.toContain("rotated-secret");
   });
 
-  it("clears expired durable authorization and requires reauthentication", async () => {
+  it("does not inherit an old absolute expiry when PSN rotates the token without a new lifetime", async () => {
+    const repository = new MemoryRepository();
+    const calls = authCalls({
+      exchangeRefreshTokenForAuthTokens: async () => ({
+        accessToken: "rotated-access",
+        expiresIn: 3600,
+        refreshToken: "rotated-without-expiry",
+      }),
+    });
+    const initial = service(repository, new Date("2026-08-19T10:00:00Z"), calls);
+    await initial.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });
+
+    await initial.refreshAuthorization("owner-1");
+    expect(repository.credential?.refreshTokenExpiresAt).toBeNull();
+
+    const afterOriginalExpiry = service(repository, new Date("2026-08-21T10:00:00Z"), calls);
+    const session = await afterOriginalExpiry.refreshAuthorization("owner-1");
+
+    expect(session.accessToken).toBe("rotated-access");
+    expect(repository.account?.authStatus).toBe("connected");
+  });
+
+  it("clears an actually expired known durable authorization and requires reauthentication", async () => {
     const repository = new MemoryRepository();
     const connection = service(repository, new Date("2026-08-19T10:00:00Z"));
     await connection.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });

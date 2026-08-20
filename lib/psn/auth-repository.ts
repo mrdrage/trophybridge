@@ -16,13 +16,13 @@ export interface PsnAccountRecord {
 
 export interface PsnCredentialRecord extends EncryptedSecret {
   psnAccountId: string;
-  refreshTokenExpiresAt: string;
+  refreshTokenExpiresAt: string | null;
   lastRefreshedAt: string;
 }
 
 export interface SaveCredentialInput extends EncryptedSecret {
   psnAccountId: string;
-  refreshTokenExpiresAt: string;
+  refreshTokenExpiresAt: string | null;
   lastRefreshedAt: string;
 }
 
@@ -171,7 +171,7 @@ export class SupabasePsnAuthRepository implements PsnAuthRepository {
       typeof row.encryption_iv !== "string" ||
       typeof row.encryption_auth_tag !== "string" ||
       typeof row.key_version !== "number" ||
-      typeof row.refresh_token_expires_at !== "string" ||
+      !(row.refresh_token_expires_at == null || typeof row.refresh_token_expires_at === "string") ||
       typeof row.last_refreshed_at !== "string"
     ) {
       storageFailure();
@@ -183,7 +183,7 @@ export class SupabasePsnAuthRepository implements PsnAuthRepository {
       iv: row.encryption_iv as string,
       authTag: row.encryption_auth_tag as string,
       keyVersion: row.key_version as number,
-      refreshTokenExpiresAt: row.refresh_token_expires_at as string,
+      refreshTokenExpiresAt: row.refresh_token_expires_at as string | null,
       lastRefreshedAt: row.last_refreshed_at as string,
     };
   }
