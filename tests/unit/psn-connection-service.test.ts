@@ -151,11 +151,36 @@ describe("PsnConnectionService", () => {
     expect(repository.account?.authStatus).toBe("connected");
   });
 
-  it("clears an actually expired known durable authorization and requires reauthentication", async () => {
+  it("asks PSN to refresh even after a recorded local expiry and forgets the stale deadline on success", async () => {
     const repository = new MemoryRepository();
-    const connection = service(repository, new Date("2026-08-19T10:00:00Z"));
+    const calls = authCalls({
+      exchangeRefreshTokenForAuthTokens: async () => ({
+        accessToken: "accepted-after-local-expiry",
+        expiresIn: 3600,
+        refreshToken: "refresh-token-secret",
+      }),
+    });
+    const connection = service(repository, new Date("2026-08-20T10:00:00Z"), calls);
     await connection.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });
-    if (repository.credential) repository.credential.refreshTokenExpiresAt = "2026-08-19T09:00:00Z";
+    if (repository.credential) repository.credential.refreshTokenExpiresAt = "2026-08-20T09:00:00Z";
+
+    const session = await connection.refreshAuthorization("owner-1");
+
+    expect(session.accessToken).toBe("accepted-after-local-expiry");
+    expect(repository.account?.authStatus).toBe("connected");
+    expect(repository.credential?.refreshTokenExpiresAt).toBeNull();
+  });
+
+  it("requires reauthentication only when PSN actually rejects the durable refresh credential", async () => {
+    const repository = new MemoryRepository();
+    const calls = authCalls({
+      exchangeRefreshTokenForAuthTokens: async () => ({
+        error: "invalid_grant",
+      }),
+    });
+    const connection = service(repository, new Date("2026-08-20T10:00:00Z"), calls);
+    await connection.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });
+    if (repository.credential) repository.credential.refreshTokenExpiresAt = "2026-08-20T09:00:00Z";
 
     await expect(connection.refreshAuthorization("owner-1")).rejects.toMatchObject({
       code: "REAUTH_REQUIRED",
