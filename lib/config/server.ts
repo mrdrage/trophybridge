@@ -39,12 +39,20 @@ export function getSupabaseAdminConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
+function vercelProductionOrigin(env: NodeJS.ProcessEnv): string | undefined {
+  const host = env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  return host ? `https://${host}` : undefined;
+}
+
 export function getAppUrl(env: NodeJS.ProcessEnv = process.env): string {
   const developmentFallback =
     env.NODE_ENV === "development" || env.NODE_ENV === "test"
       ? "http://localhost:3000"
       : undefined;
-  const value = requireValue("APP_URL", env.APP_URL ?? developmentFallback);
+  const value = requireValue(
+    "APP_URL",
+    env.APP_URL ?? vercelProductionOrigin(env) ?? developmentFallback,
+  );
   return new URL(value).origin;
 }
 
