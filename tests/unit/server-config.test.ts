@@ -17,7 +17,9 @@ describe("server configuration", () => {
 
   it("rejects an unbounded M8 public refresh budget", () => {
     expect(() =>
-      getAiContextPolicy({ AI_CONTEXT_MAX_REFRESHES_PER_HOUR: "1000" } as NodeJS.ProcessEnv),
+      getAiContextPolicy(
+        { AI_CONTEXT_MAX_REFRESHES_PER_HOUR: "1000" } as unknown as NodeJS.ProcessEnv,
+      ),
     ).toThrow("AI_CONTEXT_MAX_REFRESHES_PER_HOUR");
   });
 
