@@ -46,7 +46,7 @@ TypeScript, Next.js App Router 16, React 19, Node 24, pnpm 11.20.0, PostgreSQL/S
 - ✅ M6 Progress Events + first real post-baseline trophy
 - ✅ M7 Public Share
 - ✅ M8 AI Context + bounded AI freshness
-- ✅ M9 Dashboard + hosted activation + PSN refresh-rotation correction
+- ✅ M9 Dashboard + hosted activation + refresh-rotation correction
 - ✅ M10 Hardening + production privilege review + release docs
 
 Future work is maintenance/optional product evolution rather than a missing MVP milestone.
@@ -106,7 +106,7 @@ event: trophy_earned
 
 Only intentionally synchronized games receive deep trophy hydration; the 196-title library is not eagerly deep-hydrated.
 
-## PSN authentication and the NPSSO limitation
+## PSN authentication and NPSSO behavior
 
 The owner signs into TrophyBridge with Supabase Auth + GitHub OAuth. The PSN connection is a separate identity boundary.
 
@@ -126,18 +126,18 @@ All sync paths obtain a provider through `PsnConnectionService.createProviderFor
 
 M9 fixed incorrect expiry inheritance. If PSN returns a **different** refresh token but omits a replacement `refresh_token_expires_in`, TrophyBridge stores the rotated encrypted token with unknown local expiry instead of copying the previous token's absolute deadline.
 
-Important: this is not proof of indefinite PlayStation authorization. The public `psn-api` integration has no known supported endpoint that guarantees perpetual refresh-token renewal. A genuinely expired/revoked/rejected current credential can still require new authentication.
+M10 removes the remaining locally manufactured reauthentication deadline. A stored `refresh_token_expires_at` is advisory metadata only. Even when that date has passed, TrophyBridge tries the encrypted durable credential with PlayStation before changing auth state. If PSN accepts it, normal operation continues and a stale local expiry is cleared when appropriate. Only an actual PSN rejection, a missing credential, or an unreadable encrypted credential requires owner intervention.
 
-Do not solve this by persisting the owner's NPSSO or password.
+Therefore TrophyBridge itself no longer has an “every ten days request NPSSO” rule. This still does not establish indefinite Sony authorization. Sony can genuinely revoke or reject credentials, and TrophyBridge will not persist the owner's NPSSO/password to conceal that upstream boundary.
 
-If periodic owner reauthentication remains a practical issue, the next safe experiment is:
+If real hosted observation later shows recurring Sony-side rejection, the next safe experiment is:
 
 ```text
 verified target identity: mrdrage2 + stable accountId
 data-access identity: dedicated TrophyBridge PSN account/credential
 ```
 
-Validate every required provider call against the target account under the target privacy settings. This can move credential maintenance away from the target owner, but must not be described as a proven perpetual-token mechanism and must not claim knowledge of PSNProfiles' private backend.
+Validate every required provider call against the target account under the target privacy settings. This is an optional post-v0.1 experiment, not a proven perpetual-token mechanism and not a claim about PSNProfiles' private backend.
 
 ## Synchronization model
 
@@ -212,7 +212,7 @@ AI_CONTEXT_MAX_REFRESHES_PER_HOUR=12
 AI_CONTEXT_MAX_MISSING_TROPHIES=200
 ```
 
-Never paste a real public share token into GitHub/issues/docs. Treat the URL as a revocable read-only bearer secret.
+Never paste a real public share token into GitHub/issues/docs/chat. Treat the URL as a revocable read-only bearer secret.
 
 ## M9 dashboard
 
@@ -240,6 +240,7 @@ M10 adds:
 - global noindex + deny-all robots policy;
 - weekly Dependabot npm/GitHub Actions checks;
 - Playwright assertions for M10 browser headers/robots;
+- provider-authoritative PSN refresh validity rather than local expiry rejection;
 - `docs/RELEASE_CHECKLIST.md` and ADR 0017.
 
 Production verification after migration found exactly one browser table grant:
@@ -250,12 +251,7 @@ authenticated -> SELECT public.psn_accounts
 
 Public/browser routine grants are absent; required server RPCs remain executable by `service_role`.
 
-Supabase security advisors still show:
-
-- informational `rls_enabled_no_policy` findings for intentionally server-only tables;
-- warning: leaked-password protection disabled. TrophyBridge v0.1 owner login uses GitHub OAuth rather than an app password.
-
-Performance advisors show only informational unused-index findings on the small pilot dataset.
+Supabase security advisors still show informational `rls_enabled_no_policy` findings for intentionally server-only tables plus the leaked-password-protection warning. TrophyBridge v0.1 owner login uses GitHub OAuth rather than an app password. Performance advisors show only informational unused-index findings on the small pilot dataset.
 
 ## Zero-cost guardrails
 
@@ -298,10 +294,10 @@ Playwright smoke
 
 `pnpm-lock.yaml` is committed and CI uses frozen installs. `psn-api` remains exactly pinned until explicitly revalidated.
 
-## Known follow-ups after v0.1
+## Post-v0.1 follow-ups
 
-1. Observe the real PSN refresh credential across its genuine Sony expiry window; do not assume a local date means rotation will or will not occur.
-2. If recurring target-owner NPSSO remains annoying, run the dedicated PSN data-access identity experiment above.
+1. Observe the real hosted refresh credential across the old provider-reported expiry window. The app will attempt PSN rather than locally reject it.
+2. Only if Sony recurrently rejects the durable credential, consider the dedicated PSN data-access identity experiment.
 3. Keep dependency/provider compatibility current through reviewed Dependabot PRs and CI.
 4. Re-check Vercel/Supabase free-tier terms before adding recurring/background work.
 5. Optional UI/product work may continue, but it is post-MVP.
