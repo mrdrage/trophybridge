@@ -42,6 +42,7 @@ Normal public reads use durable last-good PostgreSQL state. `fresh=1` may contac
 - Secrets never enter public responses or Git history.
 - NPSSO is bootstrap material and is never persisted.
 - PSN access tokens are runtime-only; the durable refresh credential is encrypted with AES-256-GCM.
+- Provider-reported refresh-token expiry is advisory. TrophyBridge lets PSN itself decide whether the durable credential is still accepted instead of forcing reauthentication solely because a local date has passed.
 - A genuinely rotated PSN refresh token never inherits the prior token's absolute expiry when Sony omits a new lifetime.
 - Application code depends on TrophyBridge-owned `PsnProvider`, not raw provider payloads.
 - Incomplete deep trophy snapshots are rejected before persistence.
@@ -149,11 +150,13 @@ Real secrets belong only in local/deployment secret stores.
 
 ## PSN authorization lifecycle
 
-TrophyBridge exchanges NPSSO during bootstrap, discards it, and persists only an encrypted refresh credential. M9 fixed a real bookkeeping bug: if PSN returns a **different** refresh token but omits a new `refresh_token_expires_in`, TrophyBridge no longer copies the old token's absolute expiry onto the replacement.
+TrophyBridge exchanges NPSSO during bootstrap, discards it, and persists only an encrypted refresh credential. M9 fixed the first bookkeeping bug: if PSN returns a **different** refresh token but omits a new `refresh_token_expires_in`, TrophyBridge no longer copies the old token's absolute expiry onto the replacement.
 
-This removes TrophyBridge's artificial reauthentication deadline, but it does **not** promise perpetual authorization. The public `psn-api` integration does not establish a known supported endpoint that can renew a PSN refresh credential forever. If Sony genuinely expires/revokes/rejects the current credential, reauthentication may still be necessary.
+M10 removes the second source of artificial reauthentication. A stored `refresh_token_expires_at` is now treated as advisory metadata, not a local kill switch. Even after that date, TrophyBridge tries the encrypted durable credential once with PlayStation. If PSN accepts it, synchronization continues and a stale local deadline is discarded. Only a real PSN rejection, a missing credential, or an unreadable encrypted credential can move the connection into a state that requires owner intervention.
 
-TrophyBridge will not persist the owner's NPSSO/password to hide that limitation. If recurring owner reauthentication remains annoying in real use, the next safe experiment is to separate the verified target PSN identity from a dedicated TrophyBridge data-access PSN identity and validate every required trophy call against the target account.
+This means TrophyBridge itself no longer has a built-in “every 10 days ask for NPSSO” rule. It still cannot promise perpetual authorization because Sony controls the upstream credential lifecycle. TrophyBridge deliberately refuses to persist the owner's NPSSO/password simply to hide that limitation.
+
+A separate target/data-access PSN identity remains a safe optional experiment only if real-world observation later shows Sony repeatedly revoking the owner's durable credential despite this corrected refresh flow. No claim is made about PSNProfiles' private implementation.
 
 ## Public sharing and AI context
 
