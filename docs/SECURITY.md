@@ -25,9 +25,11 @@ A public share URL is a bearer capability. It is less privileged than PSN author
 
 NPSSO is accepted only through a private Node route for bootstrap, exchanged for PlayStation authorization and discarded. Access tokens are runtime-only. The durable refresh token is encrypted with AES-256-GCM using a fresh IV, authenticated data bound to account identity, and key versioning.
 
-M9 corrected refresh-token rotation semantics: when PSN actually returns a different refresh token without a new lifetime, TrophyBridge does not attach the previous token's absolute expiry to the replacement. This avoids an artificial reauthentication deadline.
+M9 corrected refresh-token rotation semantics: when PSN actually returns a different refresh token without a new lifetime, TrophyBridge does not attach the previous token's absolute expiry to the replacement.
 
-That correction is not a claim of perpetual PlayStation authorization. If Sony genuinely expires, revokes or rejects the current credential, reauthentication can still be required. TrophyBridge will not persist an owner NPSSO or password to bypass that boundary. A future service-identity experiment may separate the verified target PSN account from the credential used for trophy reads.
+M10 also stops treating a provider-reported refresh expiry as a local kill switch. The stored timestamp is advisory metadata. TrophyBridge attempts the encrypted durable refresh credential with PlayStation even when that recorded date has passed. If PSN accepts it, normal operation continues; if that accepted response supplies no new lifetime and the old timestamp is already stale, the local expiry is cleared. Reauthentication is requested only after an actual PSN rejection, a missing credential, or a credential that cannot be decrypted.
+
+This removes TrophyBridge's own periodic-expiry behavior without persisting a more powerful secret. It is not a claim of perpetual PlayStation authorization. Sony remains the authority that can expire, revoke or reject a credential. TrophyBridge will not persist an owner NPSSO or password to bypass that boundary. A separate data-access identity remains an optional future experiment only if real production observation shows recurring Sony-side rejection.
 
 ## TrophyBridge owner and PSN identity
 
@@ -88,7 +90,7 @@ Supabase may report `rls_enabled_no_policy` information notices for intentionall
 
 Supabase also reports leaked-password protection disabled. TrophyBridge v0.1 authenticates its owner through GitHub OAuth rather than an application password; this warning is tracked as hosted Auth configuration hygiene rather than a trophy-data privilege regression.
 
-Unused-index performance notices can remain while the pilot dataset is small. Indexes supporting domain invariants and future query paths are not removed solely because the current 196-title pilot has not exercised them enough to register usage.
+Unused-index performance notices can remain while the pilot dataset is small. Indexes supporting domain invariants and future query paths are not removed solely because the current pilot has not exercised them enough to register usage.
 
 ## Incident response
 
