@@ -24,16 +24,20 @@ export function publicShareErrorResponse(error: unknown) {
   const requestId = randomUUID();
 
   if (error instanceof ShareError) {
+    const headers: Record<string, string> = {};
+    if (error.retryAfterSeconds != null) {
+      headers["Retry-After"] = String(error.retryAfterSeconds);
+    }
     return publicJson(
       {
         error: {
           code: error.code,
           message: error.message,
-          retryable: false,
+          retryable: error.retryable,
         },
         request_id: requestId,
       },
-      { status: error.httpStatus },
+      { status: error.httpStatus, headers },
     );
   }
 

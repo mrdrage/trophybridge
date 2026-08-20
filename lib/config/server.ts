@@ -114,3 +114,29 @@ export function getGameSyncPolicy(env: NodeJS.ProcessEnv = process.env) {
     ),
   };
 }
+
+export function getAiContextPolicy(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    freshnessSeconds: boundedInteger(
+      "AI_CONTEXT_FRESHNESS_SECONDS",
+      env.AI_CONTEXT_FRESHNESS_SECONDS,
+      600,
+      60,
+      86_400,
+    ),
+    maxRefreshesPerHour: boundedInteger(
+      "AI_CONTEXT_MAX_REFRESHES_PER_HOUR",
+      env.AI_CONTEXT_MAX_REFRESHES_PER_HOUR,
+      12,
+      1,
+      120,
+    ),
+    maxMissingTrophies: boundedInteger(
+      "AI_CONTEXT_MAX_MISSING_TROPHIES",
+      env.AI_CONTEXT_MAX_MISSING_TROPHIES,
+      200,
+      10,
+      1000,
+    ),
+  };
+}
