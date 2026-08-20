@@ -24,7 +24,7 @@ export function TrophySyncButton({ gameId }: { gameId: string }) {
       };
 
       if (!response.ok) {
-        let text = data.error?.message ?? "Sincronizzazione dei trofei non riuscita.";
+        let text = data.error?.message ?? "Aggiornamento dei trofei non riuscito.";
         if (data.error?.retryAfterSeconds) {
           const minutes = Math.max(1, Math.ceil(data.error.retryAfterSeconds / 60));
           text += ` Riprova tra circa ${minutes} min.`;
@@ -46,7 +46,7 @@ export function TrophySyncButton({ gameId }: { gameId: string }) {
       }
       router.refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Sincronizzazione dei trofei non riuscita.");
+      setMessage(error instanceof Error ? error.message : "Aggiornamento dei trofei non riuscito.");
     } finally {
       setBusy(false);
     }
@@ -54,8 +54,8 @@ export function TrophySyncButton({ gameId }: { gameId: string }) {
 
   return (
     <>
-      <button className="button primary" type="button" onClick={syncTrophies} disabled={busy}>
-        {busy ? "Sincronizzazione…" : "Sincronizza trofei"}
+      <button className="button" type="button" onClick={syncTrophies} disabled={busy}>
+        {busy ? "Aggiornamento…" : "Aggiorna ora"}
       </button>
       {message && <p className="notice" role="status">{message}</p>}
     </>
