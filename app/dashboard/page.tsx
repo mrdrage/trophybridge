@@ -36,7 +36,7 @@ export default async function DashboardPage() {
     <main className="shell dashboard-shell">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M7</p>
+          <p className="eyebrow">TrophyBridge · M8</p>
           <h1 className="section-title">PlayStation</h1>
         </div>
         <form action={signOut}>

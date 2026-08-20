@@ -7,5 +7,5 @@ test("foundation landing page renders", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /PlayStation trophy progress/i }),
   ).toBeVisible();
-  await expect(page.getByText("M7 · Public Share complete")).toBeVisible();
+  await expect(page.getByText("M8 · AI Context complete")).toBeVisible();
 });

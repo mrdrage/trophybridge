@@ -2,7 +2,7 @@ const principles = [
   "Privacy-first by design",
   "Base game and additional groups kept separate",
   "Revocable hashed public capabilities",
-  "Zero-cost bounded synchronization",
+  "Zero-cost bounded AI freshness",
 ];
 
 export default function HomePage() {
@@ -13,10 +13,10 @@ export default function HomePage() {
         <h1>PlayStation trophy progress, ready for an AI copilot.</h1>
         <p className="lede">
           TrophyBridge sincronizza i trofei, conserva uno stato verificabile e offre
-          un&apos;API pubblica read-only e revocabile affinché un assistente AI possa
-          capire con precisione il percorso verso il Platino.
+          un&apos;API pubblica revocabile affinché un assistente AI possa capire e, quando
+          serve, aggiornare in modo controllato il percorso verso il Platino.
         </p>
-        <div className="status">M7 · Public Share complete</div>
+        <div className="status">M8 · AI Context complete</div>
       </section>
 
       <section className="principles" aria-label="Project principles">

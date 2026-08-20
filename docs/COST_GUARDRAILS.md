@@ -4,7 +4,7 @@ Last verified: 2026-08-20.
 
 ## Requirement
 
-TrophyBridge has a hard personal v0.1 operating-cost target of **€0/month**. If quota pressure appears, application behavior must reduce optional work, throttle, serve last-good state or temporarily refuse work rather than require a paid upgrade.
+TrophyBridge has a hard personal v0.1 operating-cost target of **€0/month**. Under quota or upstream pressure the application must reduce optional work, throttle, serve last-good state or temporarily refuse work rather than require a paid upgrade.
 
 ## Hosted envelope
 
@@ -13,63 +13,50 @@ TrophyBridge has a hard personal v0.1 operating-cost target of **€0/month**. I
 - Vercel Hobby planned for deployment.
 - PlayStation integration through pinned open-source `psn-api`, with no paid data broker.
 
-No paid add-on, VPS, Redis, queue, object-image mirror, background worker or external observability product is required through M7.
+No VPS, Redis, queue, image mirror, always-on worker or paid observability dependency is required through M8.
 
-## M4 library bounds
-
-```text
-manual trigger
-minimum successful-sync interval: 3600 s
-maximum titles: 2000
-stale-run recovery: 600 s
-one running library sync/account
-dashboard overview bounded
-```
-
-## M5/M6 game-trophy bounds
+## Library and game bounds
 
 ```text
-manual/private trigger through M7
-minimum interval per account/game: 300 s
-maximum groups: 100
-maximum title trophies: 1000
-maximum player trophy states: 1000
-stale-run recovery: 600 s
-one running sync/account/game
+library sync: >=3600s, <=2000 titles, one running/account
+game trophy sync: >=300s, <=100 groups, <=1000 trophies, one running/account/game
+stale-run recovery: 600s default
 ```
 
-M6 event detection piggybacks on the same game snapshot. It adds no second PSN call path, scheduler or queue.
+M6 event detection piggybacks on the same game snapshot and does not add a second provider call path.
 
 ## M7 public-share bounds
 
-M7 public GETs read durable PostgreSQL state only and **never contact PSN**.
+Normal public reads use durable PostgreSQL state only.
 
 ```text
 one active share/account
 256-bit bearer token, SHA-256 stored
 library pagination: default 100, max 200 rows/request
-o public refresh in M7
-no ai-context refresh in M7
-last_used_at telemetry: best-effort, coarse interval
+hidden library games excluded
 ```
 
-A public client therefore cannot turn one HTTP request into a full-library PSN crawl. Hidden games are excluded before serialization.
+## M8 AI-triggered freshness
 
-M7 does not automatically create a share link during migration. The owner must explicitly generate one.
+M8 removes the owner's normal need to press `Sincronizza trofei` by making freshness demand-driven rather than scheduled.
 
-## M8 accepted direction
+```text
+AI_CONTEXT_FRESHNESS_SECONDS=600
+AI_CONTEXT_MAX_REFRESHES_PER_HOUR=12
+AI_CONTEXT_MAX_MISSING_TROPHIES=200
+```
 
-The owner does not want to press `Sincronizza trofei` forever. The preferred zero-cost design is **on-demand AI-triggered freshness**, not continuous polling.
+`ai-context?fresh=1` can refresh **one requested game only**. TrophyBridge first reads PostgreSQL. If the snapshot is younger than the freshness threshold, it returns immediately without touching PSN.
 
-`ai-context?fresh=1` will be allowed to refresh at most one requested game, only when stale and when the existing 300-second cooldown/single-flight gates allow it. A fresh-enough request will return cached durable state without touching PSN. Provider failure serves last-good state when available.
+If stale, the request must atomically claim from a per-share hourly budget. An allowed claim still passes through the existing game-level 300-second cooldown, database single-flight protection, stale-run recovery and snapshot-size ceilings. A revoked share cannot claim work.
 
-This aligns work with actual assistant usage and avoids an always-on worker or Mac.
+Provider/reauth failure serves durable last-good trophy state whenever it exists. The endpoint never fans out across the 196-title library from one request.
 
-Optional background automation can be evaluated later, but it is not accepted if it creates uncontrolled quota usage.
+This architecture deliberately trades continuous background freshness for work proportional to actual assistant use. No cron, queue or always-on Mac is required.
 
 ## Storage discipline
 
-Persist compact factual text/numeric state and upstream artwork URLs. Do not mirror PlayStation images into Supabase Storage. Public sharing stores only token hashes, not plaintext URLs.
+Persist compact factual text/numeric state and upstream artwork URLs. Do not mirror PlayStation images into Supabase Storage. Public sharing stores only token hashes, not plaintext capability URLs.
 
 ## Quota-pressure response order
 
@@ -84,20 +71,22 @@ reduce refresh frequency
 
 Automatic paid upgrade is never the fallback.
 
-## Production checkpoint after M7
+## Production checkpoint after M8
 
 ```text
 games/account_games: 196 / 196
 FF16 groups/trophies/player rows/earned: 3 / 69 / 69 / 18
 progress_events: 1
-share_links immediately after M7 migration: 0
-active share links: 0
+share_links: 1
+active share_links: 1
+active share ai_refresh_count immediately after migration: 0
+claim_share_ai_refresh: service_role only
 ```
 
-The M7 schema therefore introduced negligible persistent data and no recurring job.
+The M8 schema added only three small refresh-budget fields to `share_links` and one server-only function. It created no recurring job and did not alter factual game/trophy state.
 
-Supabase security advisors remain the expected deny-by-default RLS informational notices plus the pre-existing leaked-password-protection warning; current TrophyBridge login uses GitHub OAuth. Performance advisor findings remain unused-index informational notices on a very small/new dataset.
+Supabase security advisors remain the expected deny-by-default RLS informational notices plus the pre-existing leaked-password-protection warning; current TrophyBridge login uses GitHub OAuth. Performance findings are unused-index informational notices on the tiny/new dataset.
 
 ## Review cadence
 
-Re-check current free-tier terms before first Vercel deployment, before adding any hosted dependency or scheduler, when M8 public freshness is implemented, after material provider-plan changes, and during M10 hardening.
+Re-check current free-tier terms before first Vercel deployment, before adding any hosted dependency or scheduler, after provider-plan changes, and during M10 hardening.
