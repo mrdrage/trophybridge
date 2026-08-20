@@ -100,7 +100,7 @@ export function SharePanel({
         <div className="connection-meta">
           <strong>Link attivo</strong>
           <span>
-            Il token non è memorizzato in chiaro. Se non hai più l'URL, rigenerala: quella
+            Il token non è memorizzato in chiaro. Se non hai più l’URL, rigenerala: quella
             precedente verrà revocata automaticamente.
           </span>
         </div>
@@ -109,7 +109,7 @@ export function SharePanel({
       {shareUrl && (
         <div className="connection-meta share-url-box">
           <strong>URL pubblico</strong>
-          <code>{shareUrl}</code>
+          <code style={{ overflowWrap: "anywhere" }}>{shareUrl}</code>
         </div>
       )}
 
