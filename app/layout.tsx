@@ -8,6 +8,16 @@ export const metadata: Metadata = {
   title: "TrophyBridge",
   description:
     "A privacy-first bridge between PlayStation trophy data and AI-assisted platinum tracking.",
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

@@ -20,7 +20,7 @@ export default function HomePage() {
         </p>
         <div className="actions">
           <Link className="button primary" href="/dashboard">Apri dashboard</Link>
-          <span className="status">M9 · Dashboard</span>
+          <span className="status">M10 · Release hardened</span>
         </div>
       </section>
 

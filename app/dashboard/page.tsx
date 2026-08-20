@@ -47,7 +47,7 @@ export default async function DashboardPage() {
     <main className="shell dashboard-shell dashboard-wide">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">TrophyBridge · M9</p>
+          <p className="eyebrow">TrophyBridge · M10</p>
           <h1 className="section-title">Il tuo hub trofei</h1>
           <p className="dashboard-subtitle">
             Stato PlayStation, libreria e ponte AI in un&apos;unica schermata. Il JSON resta

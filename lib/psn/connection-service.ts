@@ -111,15 +111,11 @@ export class PsnConnectionService {
     }
 
     const now = this.now();
-    if (
-      credential.refreshTokenExpiresAt &&
-      new Date(credential.refreshTokenExpiresAt).getTime() <= now.getTime()
-    ) {
-      await this.repository.clearCredential(account.id);
-      await this.repository.setAuthStatus(account.id, "reauth_required");
-      throw new PsnConnectionError("REAUTH_REQUIRED");
-    }
 
+    // A provider-reported absolute expiry is advisory, not authority. Sony can
+    // continue accepting or rotating a refresh credential after that timestamp,
+    // so TrophyBridge always attempts the refresh once and only asks for NPSSO
+    // when PSN actually rejects the credential.
     await this.repository.setAuthStatus(account.id, "refreshing");
 
     let refreshToken: string;
@@ -205,8 +201,17 @@ export class PsnConnectionService {
     // Sony can return a brand-new refresh token without repeating an expiry.
     // The old absolute expiry belongs to the old token, so inheriting it would
     // make TrophyBridge falsely demand a new NPSSO after that old date.
-    // With a rotated token and unknown lifetime, defer validity to PSN itself.
     if (tokenRotated) return null;
+
+    // If Sony just accepted a credential after its recorded expiry, that local
+    // timestamp is demonstrably stale. Forget it and let later PSN responses be
+    // the source of truth instead of manufacturing a reauthentication deadline.
+    if (
+      credential.refreshTokenExpiresAt &&
+      new Date(credential.refreshTokenExpiresAt).getTime() <= now.getTime()
+    ) {
+      return null;
+    }
 
     return credential.refreshTokenExpiresAt;
   }

@@ -4,176 +4,207 @@ Last updated: 2026-08-20
 
 ## Mission
 
-TrophyBridge is a privacy-first bridge between PlayStation trophy state and AI-assisted platinum tracking. It synchronizes factual PSN data, separates base-game trophies from additional groups, records newly observed earned events, exposes a revocable public capability, and gives an AI a compact game context that can request bounded freshness without asking the owner to press a sync button.
+TrophyBridge is a privacy-first bridge between PlayStation trophy state and AI-assisted Platinum tracking. It synchronizes factual PSN data, separates base-game trophies from additional groups, records newly observed earned events, exposes a revocable public capability, and gives an AI a compact game context that can request bounded freshness without requiring the owner to press a sync button.
 
-Pilot account: `mrdrage2`.
+Repository: `mrdrage/trophybridge`.
+Hosted app: `https://trophybridge.vercel.app`.
+Pilot PSN Online ID: `mrdrage2`.
 Pilot game: Final Fantasy XVI on PS5.
 Preferred trophy locale: `it-IT`.
-Repository: `mrdrage/trophybridge`.
 Operating-cost requirement: **€0/month**.
-Owner local development port: `3001`; another local project uses `3000`.
+Local development port: `3001`; localhost is no longer a production/runtime dependency.
 
-## MVP definition of done
+## v0.1 definition of done
 
-1. Owner signs in.
-2. PSN target identity is connected and verified.
-3. Library synchronization discovers the pilot game.
-4. Game synchronization imports complete groups/trophy/player state.
-5. Base platinum progress excludes additional groups.
-6. Newly earned trophies are detected after a baseline.
-7. A revocable public capability exposes factual state.
-8. A fresh AI conversation can consume an optimized current-game context.
-9. The AI can request bounded freshness without the owner manually pressing a sync button.
-10. Hosted deployment remains inside the zero-cost envelope.
+The v0.1 MVP is complete:
 
-Items 1-9 are implemented. Item 10 requires the later Vercel Hobby deployment/final hosted validation.
+1. GitHub-authenticated owner session.
+2. Verified PSN target identity and secure credential bootstrap.
+3. Real library synchronization.
+4. Complete per-game trophy synchronization.
+5. Base Platinum progress isolated from additional groups.
+6. Baseline-aware new trophy events.
+7. Revocable public capability sharing.
+8. AI-specific current-game context.
+9. AI-triggered bounded one-game freshness.
+10. Human owner dashboard.
+11. Hosted Vercel runtime with no required localhost.
+12. Final M10 security/cost/supply-chain hardening.
 
 ## Stack
 
-TypeScript, Next.js App Router, Node 24, pnpm 11.20.0, PostgreSQL/Supabase Free, Supabase Auth + SSR, GitHub OAuth, `psn-api` 2.18.1 behind `PsnApiProvider`, Zod, AES-256-GCM, Vitest, PostgreSQL invariant tests, Playwright, GitHub Actions, Vercel Hobby planned.
+TypeScript, Next.js App Router 16, React 19, Node 24, pnpm 11.20.0, PostgreSQL/Supabase Free, Supabase Auth + SSR, GitHub OAuth, exact `psn-api` 2.18.1 behind `PsnApiProvider`, Zod, AES-256-GCM, Vitest, PostgreSQL invariant tests, Playwright, public GitHub Actions standard runners, Vercel Hobby.
 
 ## Milestone status
 
 - ✅ M0 Foundation
 - ✅ M1 Domain Model
 - ✅ M2 PSN Provider
-- ✅ M3 Authentication implementation/schema + live owner connection
+- ✅ M3 Authentication + live owner connection
 - ✅ M4 Library Sync + live 196-title validation
 - ✅ M5 Trophy Sync + live Final Fantasy XVI baseline
-- ✅ M6 Progress Events + first real post-baseline trophy detected
-- ✅ M7 Public Share + production schema + local link validation
-- ✅ M8 AI Context + bounded AI-triggered freshness implementation + production schema
-- M9 Dashboard
-- M10 Hardening + hosted deployment validation
+- ✅ M6 Progress Events + first real post-baseline trophy
+- ✅ M7 Public Share
+- ✅ M8 AI Context + bounded AI freshness
+- ✅ M9 Dashboard + hosted activation + refresh-rotation correction
+- ✅ M10 Hardening + production privilege review + release docs
 
-M8 still needs the owner-local smoke after merge: open the AI-context URL, then `?fresh=1`, and confirm the JSON/freshness outcome. Hosted/fresh-ChatGPT access cannot be validated until deployment because localhost is unreachable remotely.
+Future work is maintenance/optional product evolution rather than a missing MVP milestone.
 
-## Authentication state
+## Hosted production checkpoint
 
-Current synchronization uses the pilot owner's PlayStation authorization.
-
-- GitHub OAuth works locally.
-- PSN target `mrdrage2` is connected.
-- Initial ownership is verified with stable account ID, `getProfileFromAccountId`, `isMe=true`, and exact Online ID matching.
-- NPSSO is bootstrap-only and never persisted.
-- PSN access tokens are runtime-only.
-- The durable refresh credential is AES-256-GCM encrypted in server-only `psn_credentials`.
-- Provider-reported refresh expiry is persisted.
-- `PsnConnectionService.createProviderForOwner(ownerUserId)` remains the synchronization authorization boundary.
-- If the durable credential expires/rejects, code enters `reauth_required` and M8 can still serve last-good data when it exists.
-
-### Authentication architecture follow-up
-
-`psn-api` 2.18.1 documents that `getUserTitles` and `getUserTrophiesEarnedForTitle` accept a numeric target account ID belonging to another PSN account when the authenticating account has permission to view that target trophy list.
-
-Future controlled validation should therefore test:
+Canonical origin:
 
 ```text
-target identity: mrdrage2 + stable accountId
-data-access identity: separately managed TrophyBridge PSN credential
+https://trophybridge.vercel.app
 ```
 
-If every required call works for the target under the pilot privacy settings, recurring owner NPSSO entry can be removed without ever persisting the owner's NPSSO. Ownership verification remains a separate concern and must not be weakened. Do not claim PSNProfiles uses this exact architecture; its private implementation is unknown.
+Production GitHub OAuth has been validated by the owner and reaches `/dashboard` without localhost. PR #14 fixed the original hosted OAuth origin bug by deriving OAuth/callback origins from real request headers.
 
-Long-term persistence of the target owner's NPSSO is not accepted.
+Supabase project:
 
-## Real data checkpoints
+```text
+ref: aecehligohfsjqbgoeeo
+region: eu-west-3
+plan target: Free
+status at M10 review: ACTIVE_HEALTHY
+```
 
-### M4
+Production migrations are applied through:
+
+```text
+20260820204344  m10_release_hardening
+```
+
+## Real factual data checkpoint
+
+Production after the M10 migration remains:
 
 ```text
 games: 196
 account_games: 196
+trophy_groups: 3
+trophies: 69
+player_trophies: 69
+progress_events: 1
+active share capabilities: 1
 ```
 
-### M5 baseline, Final Fantasy XVI
+Final Fantasy XVI:
 
 ```text
 game_id: 0e4a06e6-97f4-4115-bed0-0429dbcf9e7a
-library progress at baseline: 19%
+platform: PS5
 trophy groups: 3
-trophies: 69
-player rows: 69
-earned at baseline: 17
-progress_events at baseline: 0
-```
-
-### M6 first real delta
-
-```text
-trophy: Fiamme gemelle
+trophies/player rows: 69 / 69
+earned after first real M6 delta: 18
+first post-baseline trophy: Fiamme gemelle
 PSN trophy id: 8
 type: bronze
 event: trophy_earned
-occurred_at: 2026-08-20T10:52:46Z
-detected_at: 2026-08-20T11:44:03.787Z
-game sync status: success
-trophies_processed: 69
-new_trophies_found: 1
-FF16 earned total after sync: 18
 ```
 
-Production remains at 196 games/account_games, FF16 3 groups / 69 trophies / 69 player rows / 18 earned, and one real progress event after the M8 migration.
+Only intentionally synchronized games receive deep trophy hydration; the 196-title library is not eagerly deep-hydrated.
 
-## M7 Public Share
+## PSN authentication and NPSSO behavior
 
-One active account-level bearer capability exists at a time.
+The owner signs into TrophyBridge with Supabase Auth + GitHub OAuth. The PSN connection is a separate identity boundary.
+
+Initial PSN bootstrap:
 
 ```text
-plaintext: tb1_ + 43 base64url chars (256 random bits)
-stored: SHA-256 hexadecimal hash only
+Online ID + NPSSO
+-> NPSSO exchanged server-side
+-> stable accountId resolved
+-> profile verified with isMe=true + Online ID match
+-> NPSSO discarded
+-> access token runtime-only
+-> refresh token encrypted AES-256-GCM in server-only psn_credentials
 ```
 
-The raw token is returned only when generated. Regeneration atomically revokes the old capability. Explicit revoke preserves trophy state.
+All sync paths obtain a provider through `PsnConnectionService.createProviderForOwner(ownerUserId)`.
 
-Private endpoints:
+M9 fixed incorrect expiry inheritance. If PSN returns a **different** refresh token but omits a replacement `refresh_token_expires_in`, TrophyBridge stores the rotated encrypted token with unknown local expiry instead of copying the previous token's absolute deadline.
+
+M10 removes the remaining locally manufactured reauthentication deadline. A stored `refresh_token_expires_at` is advisory metadata only. Even when that date has passed, TrophyBridge tries the encrypted durable credential with PlayStation before changing auth state. If PSN accepts it, normal operation continues and a stale local expiry is cleared when appropriate. Only an actual PSN rejection, a missing credential, or an unreadable encrypted credential requires owner intervention.
+
+Therefore TrophyBridge itself no longer has an “every ten days request NPSSO” rule. This still does not establish indefinite Sony authorization. Sony can genuinely revoke or reject credentials, and TrophyBridge will not persist the owner's NPSSO/password to conceal that upstream boundary.
+
+If real hosted observation later shows recurring Sony-side rejection, the next safe experiment is:
 
 ```text
-GET    /api/private/v1/share
-POST   /api/private/v1/share
-DELETE /api/private/v1/share
+verified target identity: mrdrage2 + stable accountId
+data-access identity: dedicated TrophyBridge PSN account/credential
 ```
 
-Public endpoints:
+Validate every required provider call against the target account under the target privacy settings. This is an optional post-v0.1 experiment, not a proven perpetual-token mechanism and not a claim about PSNProfiles' private backend.
+
+## Synchronization model
+
+Library sync:
+
+```text
+owner -> LibrarySyncService
+      -> PsnConnectionService
+      -> PsnProvider.getGames
+      -> bounded atomic snapshot
+      -> games/account_games/sync_runs
+```
+
+Game trophy sync:
+
+```text
+selected account_game
+-> TrophySyncService
+-> getTrophyGroups
+-> getTrophies
+-> getUserTrophies
+-> strict complete-snapshot validation
+-> atomic persist
+-> progress-event delta detection
+```
+
+Core limits:
+
+```text
+library: >=3600s, <=2000 games
+game: >=300s, <=100 groups, <=1000 trophies
+stale run: 600s
+one running library sync/account
+one running game sync/account/game
+```
+
+Earned state is monotonic. Incomplete/inconsistent snapshots reject before persistence. Additional trophy groups never count toward base Platinum completion.
+
+## Public share + AI context
+
+One active capability per account. Token shape is `tb1_` + 256 bits random material; PostgreSQL stores SHA-256 only. Plaintext is shown only when generated. Regeneration revokes the prior link.
+
+Public API:
 
 ```text
 GET /api/public/v1/share/{token}
-GET /api/public/v1/share/{token}/games?limit=&offset=
+GET /api/public/v1/share/{token}/games
 GET /api/public/v1/share/{token}/games/{gameId}
-GET /api/public/v1/share/{token}/games/{gameId}/trophies?scope=base|dlc|all&status=earned|missing|all
+GET /api/public/v1/share/{token}/games/{gameId}/trophies
+GET /api/public/v1/share/{token}/games/{gameId}/ai-context?fresh=0|1
 ```
 
-Public responses are no-store/non-indexed/no-referrer, exclude hidden library games and auth material, and spoiler-mask unearned hidden trophy metadata.
+`ai-context` contains identity, base Platinum progress, additional-group summary, bounded missing base trophies, recent progress events and explicit sync/freshness metadata.
 
-The owner has already generated an M7 link locally and confirmed that it returns JSON.
-
-## M8 AI Context
-
-New endpoint:
+`fresh=1` flow:
 
 ```text
-GET /api/public/v1/share/{token}/games/{gameId}/ai-context
-GET /api/public/v1/share/{token}/games/{gameId}/ai-context?fresh=1
+validate active share + visible requested game
+-> read durable trophy state
+-> fresh enough: return DB, no PSN
+-> stale: atomically claim share refresh budget
+-> sync exactly one game through TrophySyncService
+-> reload context
+-> on provider failure, serve last-good state when available
 ```
 
-Discovery now advertises `ai_context=true` and `refresh=true`.
-
-AI context top-level contract:
-
-```text
-schema_version
-generated_at
-identity
-progress
-missing_trophies
-recent_activity
-sync
-endpoints
-```
-
-The context is factual. It contains base platinum progress, additional-group summary, missing base trophies, recent M6 events and explicit sync/freshness metadata. Hidden unearned trophy names/descriptions/icons remain masked.
-
-Default M8 guardrails:
+Defaults:
 
 ```text
 AI_CONTEXT_FRESHNESS_SECONDS=600
@@ -181,142 +212,106 @@ AI_CONTEXT_MAX_REFRESHES_PER_HOUR=12
 AI_CONTEXT_MAX_MISSING_TROPHIES=200
 ```
 
-### M8 `fresh=1` flow
+Never paste a real public share token into GitHub/issues/docs/chat. Treat the URL as a revocable read-only bearer secret.
+
+## M9 dashboard
+
+Owner-facing pages:
 
 ```text
-public capability
-  -> visible game validation
-  -> read durable trophy state
-  -> fresh enough? return DB state, no PSN
-  -> stale? atomic share refresh claim
-  -> TrophySyncService.sync(ownerUserId, gameId)
-  -> existing 300s game cooldown + DB single-flight + snapshot limits
-  -> persist factual state/events
-  -> reload AI context
+/dashboard
+/dashboard/library
+/dashboard/games/{gameId}
 ```
 
-One public request can refresh exactly one game. There is no full-library fan-out.
+JSON is deliberately a machine interface. The owner sees a human dashboard; the manual trophy-sync button remains an explicit fallback/diagnostic control rather than the normal AI flow.
 
-The per-share refresh budget is stored on `share_links` and claimed by server-only RPC `claim_share_ai_refresh`. `authenticated` cannot execute the RPC; `service_role` can. Revoked links cannot claim work.
+## M10 hardening
 
-If a requested refresh fails and cached trophy data exists, M8 serves last-good data with `served_last_good=true` and a factual outcome such as `reauth_required`, `upstream_unavailable`, `cooldown`, or `in_progress`. It does not regress the database.
+M10 adds:
 
-### M8 production migration
+- no direct application-table privileges for `anon`;
+- only `authenticated SELECT` on `psn_accounts`, still owner-filtered by RLS;
+- no PUBLIC/anon/authenticated execution of public-schema helper/RPC functions;
+- service-role-only execution of snapshot/share/refresh RPCs;
+- restrictive default privileges for future migration-owned tables/functions;
+- same-origin checks for state-changing `/api/private/*` requests;
+- CSP/frame/no-sniff/no-referrer/HSTS/Permissions Policy hardening;
+- global noindex + deny-all robots policy;
+- weekly Dependabot npm/GitHub Actions checks;
+- Playwright assertions for M10 browser headers/robots;
+- provider-authoritative PSN refresh validity rather than local expiry rejection;
+- `docs/RELEASE_CHECKLIST.md` and ADR 0017.
 
-Applied:
+Production verification after migration found exactly one browser table grant:
 
 ```text
-name: m8_ai_context_refresh
-Supabase version: 20260820130606
+authenticated -> SELECT public.psn_accounts
 ```
 
-Direct verification after migration:
+Public/browser routine grants are absent; required server RPCs remain executable by `service_role`.
 
-```text
-claim_share_ai_refresh exists: yes
-authenticated can execute claim: no
-service_role can execute claim: yes
-share_links: 1
-active share_links: 1
-active share ai_refresh_count: 0
-games/account_games: 196 / 196
-FF16 groups/trophies/player rows/earned: 3 / 69 / 69 / 18
-progress_events: 1
-```
-
-The migration did not consume the owner's refresh budget or alter factual game/trophy state.
-
-Security advisors show the same expected RLS-without-policy informational notices for deny-by-default/server-only tables and the pre-existing Supabase Auth leaked-password-protection warning. No new M8-specific actionable database warning appeared. Performance advisors remain unused-index informational notices on the tiny/new dataset.
-
-## M8 testing
-
-CI coverage includes:
-
-- AI context returns platinum-focused state without refreshing unless requested;
-- stale `fresh=1` claims budget and refreshes one game;
-- successful refresh reloads the newly persisted state and exposes `new_trophies_found`;
-- cached last-good state survives `reauth_required`;
-- exhausted public budget serves cached data without PSN work;
-- refresh policy values are bounded;
-- PostgreSQL claim budget resets by window, denies excess claims, rejects revoked shares and is service-role-only.
-
-The first M8 CI run caught only a strict TypeScript test-cast issue. It was fixed; the corrected run passed lint, typecheck, unit/integration tests, build, PostgreSQL invariants and Playwright.
-
-## Local M8 smoke after merge
-
-```bash
-cd ~/trophybridge
-git checkout main
-git pull
-pnpm install --frozen-lockfile
-pnpm dev:local
-```
-
-Open the existing M7 discovery URL. Discovery should now show:
-
-```text
-ai_context: true
-refresh: true
-```
-
-Use the FF16 `game_id` above and open:
-
-```text
-http://localhost:3001/api/public/v1/share/<TOKEN>/games/0e4a06e6-97f4-4115-bed0-0429dbcf9e7a/ai-context
-```
-
-Then test once with:
-
-```text
-...?fresh=1
-```
-
-Never paste the share token into GitHub or public chat. It is a revocable read-only bearer secret.
-
-Expected JSON includes `identity`, `progress`, `missing_trophies`, `recent_activity`, and `sync`. Depending on age, `fresh=1` should show either `not_needed` or an attempted refresh outcome. A localhost link cannot yet be reached from a remote fresh ChatGPT conversation.
+Supabase security advisors still show informational `rls_enabled_no_policy` findings for intentionally server-only tables plus the leaked-password-protection warning. TrophyBridge v0.1 owner login uses GitHub OAuth rather than an app password. Performance advisors show only informational unused-index findings on the small pilot dataset.
 
 ## Zero-cost guardrails
 
+Production uses:
+
 ```text
-library sync: >=3600s, <=2000 titles, one running/account
-game sync: >=300s, <=100 groups, <=1000 trophies, one running/account/game
-AI freshness threshold: 600s default
-AI public refresh budget: 12/hour/share default
-AI embedded missing trophies: <=200 default
-one public request refreshes at most one game
-one active share/account
-no cron
-no queue
-no background worker
-no image mirroring
-no paid dependency
+Supabase Free
+Vercel Hobby
+public GitHub repository
+standard GitHub-hosted Actions
 ```
 
-## Next milestone: M9 Dashboard
+No VPS, Redis, queue, cron, worker, image mirror, paid DB, premium runner, distributed paid rate-limit store or paid observability service is required.
 
-M9 should improve operational clarity rather than add a second factual source. Priorities:
+If quota pressure appears:
 
-- connection/reauth health and provider expiry visibility without exposing secrets;
-- library/game freshness status;
-- clear distinction between library sync and trophy sync;
-- public-share status and revocation;
-- AI-context/freshness status and budget visibility where useful;
-- keep manual trophy sync as a diagnostic fallback, not a requirement for normal AI use;
-- preserve mobile usability and the €0/month envelope.
+```text
+reduce optional refresh frequency
+-> tighten bounds
+-> disable optional freshness
+-> serve last-good state
+-> temporarily refuse sync work
+-> redesign
+```
 
-M10 then performs hardening, Vercel Hobby deployment, public URL validation from a fresh ChatGPT conversation, quota/security review, and final release documentation.
+Never auto-upgrade to paid capacity.
+
+## CI/release gate
+
+Every meaningful release path must pass:
+
+```text
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+PostgreSQL migration/domain invariants
+Playwright smoke
+```
+
+`pnpm-lock.yaml` is committed and CI uses frozen installs. `psn-api` remains exactly pinned until explicitly revalidated.
+
+## Post-v0.1 follow-ups
+
+1. Observe the real hosted refresh credential across the old provider-reported expiry window. The app will attempt PSN rather than locally reject it.
+2. Only if Sony recurrently rejects the durable credential, consider the dedicated PSN data-access identity experiment.
+3. Keep dependency/provider compatibility current through reviewed Dependabot PRs and CI.
+4. Re-check Vercel/Supabase free-tier terms before adding recurring/background work.
+5. Optional UI/product work may continue, but it is post-MVP.
 
 ## Documentation map
 
-- `README.md`: project/status
-- `docs/ARCHITECTURE.md`: boundaries and flows
+- `README.md`: current project/release state
+- `docs/ARCHITECTURE.md`: component and trust boundaries
 - `docs/API.md`: private/public API contracts
-- `docs/DATA_MODEL.md`: factual + share persistence
-- `docs/SECURITY.md`: credentials/capability model
-- `docs/PSN_INTEGRATION.md`: PSN provider/auth research
+- `docs/DATA_MODEL.md`: factual/share persistence
+- `docs/SECURITY.md`: credential/capability/hardening model
+- `docs/PSN_INTEGRATION.md`: provider/auth research
 - `docs/COST_GUARDRAILS.md`: €0/month envelope
-- `docs/decisions/0007-ai-context-endpoint.md`: AI context decision
-- `docs/decisions/0014-hashed-revocable-capability-sharing.md`: M7 bearer capability decision
-- `docs/decisions/0015-ai-triggered-freshness.md`: M8 bounded freshness decision
-- `CHANGELOG.md`: notable changes
-- `PROJECT_HANDOFF.md`: continuity checkpoint
+- `docs/RELEASE_CHECKLIST.md`: v0.1 release validation
+- `docs/decisions/0017-m10-release-hardening.md`: final hardening ADR
+- `CHANGELOG.md`: release changes
+- `PROJECT_HANDOFF.md`: this continuity checkpoint

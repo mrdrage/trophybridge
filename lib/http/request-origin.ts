@@ -32,3 +32,24 @@ export function getRequestOrigin(
 
   return new URL(`${protocol}://${host}`).origin;
 }
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+export function isTrustedMutationRequest(
+  method: string,
+  headers: HeaderReader,
+  fallbackOrigin?: string,
+): boolean {
+  if (SAFE_METHODS.has(method.toUpperCase())) return true;
+
+  const originHeader = headers.get("origin")?.trim();
+  if (!originHeader || originHeader === "null") return false;
+
+  try {
+    const suppliedOrigin = new URL(originHeader).origin;
+    const requestOrigin = getRequestOrigin(headers, fallbackOrigin);
+    return suppliedOrigin === requestOrigin;
+  } catch {
+    return false;
+  }
+}
