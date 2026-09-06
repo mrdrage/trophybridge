@@ -16,6 +16,7 @@ import type {
   PublicTrophyItem,
   PublicTrophyScope,
   PublicTrophyStatus,
+  ResolvedShareLink,
   RotatedShareLink,
   SharingRepository,
   VisibleGameRecord,
@@ -295,6 +296,15 @@ export class ShareService {
 
   async getAiContext(token: string, gameId: string, freshRequested: boolean) {
     const share = await this.resolve(token);
+    return this.getAiContextForResolvedShare(share, gameId, freshRequested);
+  }
+
+  async getAiContextForResolvedShare(
+    share: ResolvedShareLink,
+    gameId: string,
+    freshRequested: boolean,
+  ) {
+    if (!share.active || share.revokedAt) throw new ShareError("SHARE_LINK_REVOKED");
     await this.requireVisibleGame(share.psnAccountId, gameId);
 
     let detail = await this.trophies.getGameDetail(share.psnAccountId, gameId);
