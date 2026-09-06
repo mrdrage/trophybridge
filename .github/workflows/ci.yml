@@ -40,11 +40,13 @@ jobs:
           const require = createRequire(import.meta.url);
           const path = require.resolve('psn-api');
           const source = fs.readFileSync(path, 'utf8');
-          const marker = 'await res.json';
+          const marker = 'grant_type';
           const index = source.indexOf(marker);
           if (index < 0) throw new Error(`Could not find ${marker} in ${path}`);
           console.log(`psn-api bundle: ${path}`);
-          console.log(source.slice(Math.max(0, index - 80), index + 650));
+          // Start at the request body, after the embedded client Authorization value,
+          // so diagnostics never print that value into Actions logs.
+          console.log(source.slice(index, index + 1400));
           NODE
 
       - name: Lint
