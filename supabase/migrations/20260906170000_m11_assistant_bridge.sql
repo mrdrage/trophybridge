@@ -127,16 +127,28 @@ declare
   v_status integer;
   v_content text;
 begin
-  select r, s.token
-  into v_request, v_token
+  -- Lock the public request row so one operator invocation owns this attempt.
+  -- The Vercel endpoint performs the separate atomic consumed_at update using
+  -- the hash-only row; the private plaintext is never returned to the caller.
+  select r.*
+  into v_request
   from public.assistant_bridge_requests r
-  join private.assistant_bridge_request_secrets s on s.request_id = r.id
   where r.id = p_request_id
     and r.consumed_at is null
-    and r.expires_at > now();
+    and r.expires_at > now()
+  for update;
 
   if not found then
     raise exception 'Assistant bridge request is missing, expired, or already consumed';
+  end if;
+
+  select s.token
+  into v_token
+  from private.assistant_bridge_request_secrets s
+  where s.request_id = p_request_id;
+
+  if v_token is null then
+    raise exception 'Assistant bridge capability is unavailable';
   end if;
 
   if not exists (select 1 from pg_extension where extname = 'http') then
