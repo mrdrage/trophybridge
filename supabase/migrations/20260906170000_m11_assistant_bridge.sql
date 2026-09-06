@@ -81,11 +81,13 @@ begin
   delete from public.assistant_bridge_requests
   where expires_at < now() - interval '1 hour';
 
+  -- pgcrypto is installed in `extensions` on Supabase and may be installed in
+  -- `public` on a plain PostgreSQL CI host. The fixed search_path resolves both.
   v_token := 'tba1_' || rtrim(
-    translate(encode(extensions.gen_random_bytes(32), 'base64'), '+/', '-_'),
+    translate(encode(gen_random_bytes(32), 'base64'), '+/', '-_'),
     '='
   );
-  v_token_hash := encode(extensions.digest(v_token, 'sha256'), 'hex');
+  v_token_hash := encode(digest(v_token, 'sha256'), 'hex');
 
   insert into public.assistant_bridge_requests (
     token_hash,
@@ -125,7 +127,7 @@ declare
   v_status integer;
   v_content text;
 begin
-  select r.*, s.token
+  select r, s.token
   into v_request, v_token
   from public.assistant_bridge_requests r
   join private.assistant_bridge_request_secrets s on s.request_id = r.id
