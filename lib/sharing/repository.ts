@@ -159,6 +159,29 @@ export class SupabaseSharingRepository implements SharingRepository {
     return resolvedShareFromRow(data);
   }
 
+  async consumeAssistantBridgeRequest(
+    tokenHash: string,
+    psnAccountId: string,
+    gameId: string,
+    freshRequested: boolean,
+    consumedAt: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.client
+      .from("assistant_bridge_requests")
+      .update({ consumed_at: consumedAt })
+      .eq("token_hash", tokenHash)
+      .eq("psn_account_id", psnAccountId)
+      .eq("game_id", gameId)
+      .eq("fresh_requested", freshRequested)
+      .is("consumed_at", null)
+      .gt("expires_at", consumedAt)
+      .select("id")
+      .maybeSingle();
+
+    if (error) storageFailure();
+    return Boolean(data);
+  }
+
   async touchLink(linkId: string, usedAt: string, olderThan: string): Promise<void> {
     const { error } = await this.client
       .from("share_links")
