@@ -32,6 +32,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Inspect psn-api refresh bundle shape
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { createRequire } from 'node:module';
+          const require = createRequire(import.meta.url);
+          const path = require.resolve('psn-api');
+          const source = fs.readFileSync(path, 'utf8');
+          const marker = 'await res.json';
+          const index = source.indexOf(marker);
+          if (index < 0) throw new Error(`Could not find ${marker} in ${path}`);
+          console.log(`psn-api bundle: ${path}`);
+          console.log(source.slice(Math.max(0, index - 80), index + 650));
+          NODE
+
       - name: Lint
         run: pnpm lint
 
