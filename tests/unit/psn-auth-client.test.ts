@@ -92,4 +92,52 @@ describe("PsnAuthClient", () => {
     ).refresh("old");
     expect(retaining.refreshToken).toBeNull();
   });
+
+  it("requires reauthentication only for an explicit invalid_grant response", async () => {
+    const client = new PsnAuthClient(
+      calls({ exchangeRefreshTokenForAuthTokens: async () => ({ error: "invalid_grant" }) }),
+    );
+
+    await expect(client.refresh("old")).rejects.toMatchObject({
+      code: "REAUTH_REQUIRED",
+      retryable: false,
+    } satisfies Partial<PsnConnectionError>);
+  });
+
+  it("keeps non-invalid-grant OAuth failures retryable", async () => {
+    const client = new PsnAuthClient(
+      calls({ exchangeRefreshTokenForAuthTokens: async () => ({ error: "temporarily_unavailable" }) }),
+    );
+
+    await expect(client.refresh("old")).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      retryable: true,
+    } satisfies Partial<PsnConnectionError>);
+  });
+
+  it("treats malformed refresh responses as retryable instead of forcing NPSSO", async () => {
+    const client = new PsnAuthClient(
+      calls({ exchangeRefreshTokenForAuthTokens: async () => ({ unexpected: true }) }),
+    );
+
+    await expect(client.refresh("old")).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      retryable: true,
+    } satisfies Partial<PsnConnectionError>);
+  });
+
+  it("treats thrown refresh failures as retryable upstream failures", async () => {
+    const client = new PsnAuthClient(
+      calls({
+        exchangeRefreshTokenForAuthTokens: async () => {
+          throw new Error("network or provider failure");
+        },
+      }),
+    );
+
+    await expect(client.refresh("old")).rejects.toMatchObject({
+      code: "UPSTREAM_UNAVAILABLE",
+      retryable: true,
+    } satisfies Partial<PsnConnectionError>);
+  });
 });

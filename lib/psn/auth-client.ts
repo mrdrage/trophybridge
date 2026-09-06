@@ -33,6 +33,9 @@ export interface PsnAuthCalls {
 const defaultCalls: PsnAuthCalls = {
   exchangeNpssoForAccessCode,
   exchangeAccessCodeForAuthTokens,
+  // psn-api 2.18.1 normally drops OAuth `error` while mapping token responses.
+  // TrophyBridge's pinned postinstall patch preserves that one provider field so
+  // refresh() can distinguish authoritative invalid_grant from transient noise.
   exchangeRefreshTokenForAuthTokens,
   makeUniversalSearch: (authorization, searchTerm, domain) =>
     makeUniversalSearch(authorization, searchTerm, domain),
@@ -55,6 +58,12 @@ const refreshedTokensSchema = z
     expiresIn: z.number().int().positive(),
     refreshToken: z.string().min(1).nullable().optional(),
     refreshTokenExpiresIn: z.number().int().positive().nullable().optional(),
+  })
+  .passthrough();
+
+const oauthErrorSchema = z
+  .object({
+    error: z.string().min(1),
   })
   .passthrough();
 
@@ -168,7 +177,18 @@ export class PsnAuthClient {
 
     const tokens = refreshedTokensSchema.safeParse(rawTokens);
     if (!tokens.success) {
-      throw new PsnConnectionError("REAUTH_REQUIRED");
+      const providerError = oauthErrorSchema.safeParse(rawTokens);
+
+      // Only an explicit provider invalid_grant is strong enough evidence that
+      // the durable refresh token has been rejected. Every other malformed,
+      // throttled or upstream failure remains retryable and cannot force NPSSO.
+      if (providerError.success && providerError.data.error === "invalid_grant") {
+        throw new PsnConnectionError("REAUTH_REQUIRED");
+      }
+      if (providerError.success) {
+        throw new PsnConnectionError("UPSTREAM_UNAVAILABLE", { retryable: true });
+      }
+      throw new PsnConnectionError("INVALID_RESPONSE", { retryable: true });
     }
 
     return {

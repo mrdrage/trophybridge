@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "postinstall": "node scripts/patch-psn-api.mjs",
     "dev": "next dev",
     "dev:local": "next dev -p 3001",
     "build": "next build",

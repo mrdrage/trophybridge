@@ -104,6 +104,13 @@ export class PsnConnectionService {
     const account = await this.repository.getAccountForOwner(ownerUserId);
     if (!account) throw new PsnConnectionError("NOT_CONNECTED");
 
+    // A confirmed provider rejection is sticky until the owner reconnects with
+    // NPSSO. The encrypted credential is retained for recovery/diagnostics but
+    // must never be re-sent on every fresh=1 request once reauth is known.
+    if (account.authStatus === "reauth_required") {
+      throw new PsnConnectionError("REAUTH_REQUIRED");
+    }
+
     const credential = await this.repository.getCredential(account.id);
     if (!credential) {
       await this.repository.setAuthStatus(account.id, "reauth_required");
@@ -114,8 +121,8 @@ export class PsnConnectionService {
 
     // A provider-reported absolute expiry is advisory, not authority. Sony can
     // continue accepting or rotating a refresh credential after that timestamp,
-    // so TrophyBridge always attempts the refresh once and only asks for NPSSO
-    // when PSN actually rejects the credential.
+    // so TrophyBridge always attempts the refresh once unless PSN has already
+    // authoritatively rejected the credential.
     await this.repository.setAuthStatus(account.id, "refreshing");
 
     let refreshToken: string;
@@ -158,7 +165,9 @@ export class PsnConnectionService {
     } catch (error) {
       const normalized = normalizeConnectionError(error);
       if (normalized.code === "REAUTH_REQUIRED") {
-        await this.repository.clearCredential(account.id);
+        // Keep the encrypted credential for diagnostics and recovery. A fresh
+        // NPSSO connection overwrites it atomically; explicit disconnect still
+        // clears it. Future refresh attempts short-circuit on authStatus above.
         await this.repository.setAuthStatus(account.id, "reauth_required");
       } else {
         await this.repository.setAuthStatus(account.id, "error");

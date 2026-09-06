@@ -133,6 +133,8 @@ function makeService(input?: {
     rotateActiveLink: vi.fn(async () => ({ active: true, createdAt: "2026-08-20T12:00:00Z", lastUsedAt: null })),
     revokeActiveLink: vi.fn(async () => ({ active: false, createdAt: null, lastUsedAt: null })),
     resolveByTokenHash: vi.fn(async () => share),
+    resolveActiveForAccount: vi.fn(async () => share),
+    consumeAssistantBridgeRequest: vi.fn(async () => true),
     touchLink: vi.fn(async () => undefined),
     claimAiRefresh: vi.fn(async () => ({
       allowed: input?.claimAllowed ?? true,

@@ -58,6 +58,37 @@ function statusFromRow(value: unknown): OwnerShareStatus {
   };
 }
 
+function resolvedShareFromRow(value: unknown): ResolvedShareLink | null {
+  const row = objectValue(value);
+  if (!row) return null;
+  const account = objectValue(row.psn_accounts);
+  const linkId = stringValue(row.id);
+  const psnAccountId = stringValue(row.psn_account_id);
+  const ownerUserId = stringValue(account?.owner_user_id);
+  const onlineId = stringValue(account?.psn_online_id);
+  const preferredLocale = stringValue(account?.preferred_locale);
+  const createdAt = stringValue(row.created_at);
+  if (!linkId || !psnAccountId || !ownerUserId || !onlineId || !preferredLocale || !createdAt) {
+    storageFailure();
+  }
+
+  return {
+    linkId,
+    psnAccountId,
+    ownerUserId,
+    onlineId,
+    preferredLocale,
+    lastSuccessfulSyncAt: stringValue(account?.last_successful_sync_at),
+    createdAt,
+    lastUsedAt: stringValue(row.last_used_at),
+    active: row.is_active === true,
+    revokedAt: stringValue(row.revoked_at),
+  };
+}
+
+const RESOLVED_SHARE_SELECT =
+  "id,psn_account_id,is_active,created_at,last_used_at,revoked_at,psn_accounts!inner(owner_user_id,psn_online_id,preferred_locale,last_successful_sync_at)";
+
 export class SupabaseSharingRepository implements SharingRepository {
   constructor(private readonly client: SupabaseClient) {}
 
@@ -107,39 +138,48 @@ export class SupabaseSharingRepository implements SharingRepository {
   async resolveByTokenHash(tokenHash: string): Promise<ResolvedShareLink | null> {
     const { data, error } = await this.client
       .from("share_links")
-      .select(
-        "id,psn_account_id,is_active,created_at,last_used_at,revoked_at,psn_accounts!inner(owner_user_id,psn_online_id,preferred_locale,last_successful_sync_at)",
-      )
+      .select(RESOLVED_SHARE_SELECT)
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
     if (error) storageFailure();
-    if (!data) return null;
+    return resolvedShareFromRow(data);
+  }
 
-    const row = data as unknown as Record<string, unknown>;
-    const account = objectValue(row.psn_accounts);
-    const linkId = stringValue(row.id);
-    const psnAccountId = stringValue(row.psn_account_id);
-    const ownerUserId = stringValue(account?.owner_user_id);
-    const onlineId = stringValue(account?.psn_online_id);
-    const preferredLocale = stringValue(account?.preferred_locale);
-    const createdAt = stringValue(row.created_at);
-    if (!linkId || !psnAccountId || !ownerUserId || !onlineId || !preferredLocale || !createdAt) {
-      storageFailure();
-    }
+  async resolveActiveForAccount(psnAccountId: string): Promise<ResolvedShareLink | null> {
+    const { data, error } = await this.client
+      .from("share_links")
+      .select(RESOLVED_SHARE_SELECT)
+      .eq("psn_account_id", psnAccountId)
+      .eq("is_active", true)
+      .is("revoked_at", null)
+      .maybeSingle();
 
-    return {
-      linkId,
-      psnAccountId,
-      ownerUserId,
-      onlineId,
-      preferredLocale,
-      lastSuccessfulSyncAt: stringValue(account?.last_successful_sync_at),
-      createdAt,
-      lastUsedAt: stringValue(row.last_used_at),
-      active: row.is_active === true,
-      revokedAt: stringValue(row.revoked_at),
-    };
+    if (error) storageFailure();
+    return resolvedShareFromRow(data);
+  }
+
+  async consumeAssistantBridgeRequest(
+    tokenHash: string,
+    psnAccountId: string,
+    gameId: string,
+    freshRequested: boolean,
+    consumedAt: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.client
+      .from("assistant_bridge_requests")
+      .update({ consumed_at: consumedAt })
+      .eq("token_hash", tokenHash)
+      .eq("psn_account_id", psnAccountId)
+      .eq("game_id", gameId)
+      .eq("fresh_requested", freshRequested)
+      .is("consumed_at", null)
+      .gt("expires_at", consumedAt)
+      .select("id")
+      .maybeSingle();
+
+    if (error) storageFailure();
+    return Boolean(data);
   }
 
   async touchLink(linkId: string, usedAt: string, olderThan: string): Promise<void> {

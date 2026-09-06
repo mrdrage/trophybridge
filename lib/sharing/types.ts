@@ -82,6 +82,14 @@ export interface SharingRepository {
   ): Promise<OwnerShareStatus>;
   revokeActiveLink(psnAccountId: string, revokedAt: string): Promise<OwnerShareStatus>;
   resolveByTokenHash(tokenHash: string): Promise<ResolvedShareLink | null>;
+  resolveActiveForAccount(psnAccountId: string): Promise<ResolvedShareLink | null>;
+  consumeAssistantBridgeRequest(
+    tokenHash: string,
+    psnAccountId: string,
+    gameId: string,
+    freshRequested: boolean,
+    consumedAt: string,
+  ): Promise<boolean>;
   touchLink(linkId: string, usedAt: string, olderThan: string): Promise<void>;
   claimAiRefresh(
     linkId: string,
