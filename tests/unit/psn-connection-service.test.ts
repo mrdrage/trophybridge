@@ -171,7 +171,7 @@ describe("PsnConnectionService", () => {
     expect(repository.credential?.refreshTokenExpiresAt).toBeNull();
   });
 
-  it("requires reauthentication only when PSN actually rejects the durable refresh credential", async () => {
+  it("marks reauthentication without destroying the encrypted durable credential", async () => {
     const repository = new MemoryRepository();
     const calls = authCalls({
       exchangeRefreshTokenForAuthTokens: async () => ({
@@ -181,12 +181,30 @@ describe("PsnConnectionService", () => {
     const connection = service(repository, new Date("2026-08-20T10:00:00Z"), calls);
     await connection.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });
     if (repository.credential) repository.credential.refreshTokenExpiresAt = "2026-08-20T09:00:00Z";
+    const before = repository.credential?.ciphertext;
 
     await expect(connection.refreshAuthorization("owner-1")).rejects.toMatchObject({
       code: "REAUTH_REQUIRED",
     });
-    expect(repository.credential).toBeNull();
+    expect(repository.credential?.ciphertext).toBe(before);
     expect(repository.account?.authStatus).toBe("reauth_required");
+  });
+
+  it("preserves the encrypted credential across ambiguous retryable refresh failures", async () => {
+    const repository = new MemoryRepository();
+    const calls = authCalls({
+      exchangeRefreshTokenForAuthTokens: async () => ({ unexpected: true }),
+    });
+    const connection = service(repository, new Date("2026-08-20T10:00:00Z"), calls);
+    await connection.connect({ ownerUserId: "owner-1", onlineId: "mrdrage2", npsso: "n".repeat(64) });
+    const before = repository.credential?.ciphertext;
+
+    await expect(connection.refreshAuthorization("owner-1")).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      retryable: true,
+    });
+    expect(repository.credential?.ciphertext).toBe(before);
+    expect(repository.account?.authStatus).toBe("error");
   });
 
   it("disconnects credentials without deleting normalized account identity", async () => {
