@@ -32,23 +32,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Inspect psn-api refresh return tail
+      - name: Inspect psn-api refresh return tails
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
+          import path from 'node:path';
           import { createRequire } from 'node:module';
           const require = createRequire(import.meta.url);
-          const path = require.resolve('psn-api');
-          const source = fs.readFileSync(path, 'utf8');
-          const refreshMarker = 'refresh_token:r,grant_type:"refresh_token"';
-          const refreshIndex = source.indexOf(refreshMarker);
-          if (refreshIndex < 0) throw new Error(`Could not find refresh exchange in ${path}`);
-          const jsonIndex = source.indexOf(')).json();', refreshIndex);
-          if (jsonIndex < 0) throw new Error(`Could not find refresh JSON boundary in ${path}`);
-          console.log(`psn-api bundle: ${path}`);
-          // Print only the response mapping after the request is complete. This range
-          // cannot contain the embedded upstream client Authorization value.
-          console.log(source.slice(jsonIndex, jsonIndex + 700));
+          const cjsPath = require.resolve('psn-api');
+          const files = [cjsPath, path.join(path.dirname(cjsPath), 'index.mjs')];
+          for (const file of files) {
+            const source = fs.readFileSync(file, 'utf8');
+            const refreshMarker = 'refresh_token:r,grant_type:"refresh_token"';
+            const refreshIndex = source.indexOf(refreshMarker);
+            if (refreshIndex < 0) throw new Error(`Could not find refresh exchange in ${file}`);
+            const jsonIndex = source.indexOf(')).json();', refreshIndex);
+            if (jsonIndex < 0) throw new Error(`Could not find refresh JSON boundary in ${file}`);
+            console.log(`psn-api bundle: ${path.basename(file)}`);
+            console.log(source.slice(jsonIndex, jsonIndex + 320));
+          }
           NODE
 
       - name: Lint
