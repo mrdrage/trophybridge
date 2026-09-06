@@ -8,6 +8,8 @@ The M8 public AI context endpoint already supports a bounded `fresh=1` refresh f
 
 Real Platinum use exposed one remaining UX gap: an AI assistant can read cached TrophyBridge state, but cannot safely recover the plaintext `tb1_...` share capability because PostgreSQL stores only its SHA-256 hash. Asking the owner to open TrophyBridge and press `Aggiorna ora` defeats the purpose of the bridge.
 
+The same field test exposed a PSN authentication flaw: `psn-api` 2.18.1 maps Sony token JSON into its token DTO and discards the OAuth `error` field. TrophyBridge therefore could not distinguish an authoritative `invalid_grant` from a malformed or temporary upstream response.
+
 The solution must not make the public share token reversible, expose NPSSO/PSN credentials, add polling/cron, hydrate the full library, add paid infrastructure or introduce a reusable bearer that must be manually copied between services.
 
 ## Decision
@@ -43,7 +45,7 @@ The internal route must:
 - reuse `ShareService` AI-context serialization and refresh classification;
 - preserve the 300-second game cooldown and configured freshness/budget limits;
 - return last-good factual state when the upstream refresh is temporarily unavailable;
-- never return PSN credential material, owner UUIDs beyond existing factual DTO needs, share hashes or one-time capability material;
+- never return PSN credential material, share hashes or one-time capability material;
 - emit no-store responses.
 
 ## Security boundary
@@ -51,6 +53,14 @@ The internal route must:
 `public.assistant_bridge_requests` is RLS-protected and exposes only hash/scoping/lifecycle data to the Vercel server through `service_role`. The plaintext capability is in `private.assistant_bridge_request_secrets`, inaccessible to `anon`, `authenticated` and `service_role`.
 
 The prepare/invoke functions are `SECURITY DEFINER` only because they are operator-only infrastructure functions in an unexposed private schema. `EXECUTE` and schema access are revoked from `PUBLIC`; they are not Data API endpoints.
+
+## PSN refresh adapter
+
+Keep `psn-api` pinned at 2.18.1 and apply a narrow root-postinstall patch to both published CJS and ESM bundles. The patch preserves the provider's `error` field in the existing token response object and changes nothing about the Sony request itself.
+
+The patch script validates the exact pinned mapper shape and fails installation if the dependency changes unexpectedly. A unit test calls the real installed refresh function with mocked HTTP responses to prove that `invalid_grant` is observable, temporary provider errors remain distinguishable, successful token mapping is unchanged and network failures still throw.
+
+Once TrophyBridge has received a confirmed `invalid_grant`, it retains the encrypted durable refresh credential but sets `reauth_required`. Later refresh attempts short-circuit without decrypting or resending that rejected credential until a successful NPSSO reconnect restores `connected`.
 
 ## Why not recover or persist the public share token?
 
@@ -73,10 +83,12 @@ Positive:
 - no new long-lived shared secret is introduced;
 - no background worker is introduced;
 - the same factual DTO and sync guardrails are reused;
-- capability replay and cross-game substitution fail closed.
+- capability replay and cross-game substitution fail closed;
+- PSN reauthentication is based on an explicit provider signal rather than malformed-response guesswork.
 
 Trade-offs:
 
 - production Supabase must have the synchronous `http` extension available;
 - invocation is intentionally two database operations rather than one transaction;
+- the pinned `psn-api` patch must be re-reviewed if the dependency version changes;
 - Supabase Free project suspension can still delay the first request after inactivity; this is an infrastructure cold-start condition, not a reason to poll continuously.
