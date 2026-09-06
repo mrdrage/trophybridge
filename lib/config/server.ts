@@ -56,17 +56,6 @@ export function getAppUrl(env: NodeJS.ProcessEnv = process.env): string {
   return new URL(value).origin;
 }
 
-export function getAssistantBridgeToken(env: NodeJS.ProcessEnv = process.env): string {
-  const token = requireValue(
-    "TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN",
-    env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN,
-  );
-  if (token.length < 43) {
-    throw new Error("TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN must contain at least 256 bits of entropy");
-  }
-  return token;
-}
-
 export function getPsnTrophyLocale(env: NodeJS.ProcessEnv = process.env): string {
   const locale = (env.PSN_TROPHY_LOCALE ?? "it-IT").trim();
   if (!/^[a-z]{2}-[A-Z]{2}$/.test(locale)) {
