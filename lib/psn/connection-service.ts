@@ -158,7 +158,10 @@ export class PsnConnectionService {
     } catch (error) {
       const normalized = normalizeConnectionError(error);
       if (normalized.code === "REAUTH_REQUIRED") {
-        await this.repository.clearCredential(account.id);
+        // Keep the encrypted credential for diagnostics and recovery. A fresh
+        // NPSSO connection overwrites it atomically; explicit disconnect still
+        // clears it. This avoids destroying the only durable credential because
+        // of one upstream classification decision.
         await this.repository.setAuthStatus(account.id, "reauth_required");
       } else {
         await this.repository.setAuthStatus(account.id, "error");
