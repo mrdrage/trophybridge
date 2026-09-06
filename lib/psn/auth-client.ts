@@ -58,6 +58,12 @@ const refreshedTokensSchema = z
   })
   .passthrough();
 
+const oauthErrorSchema = z
+  .object({
+    error: z.string().min(1),
+  })
+  .passthrough();
+
 const socialSearchSchema = z
   .object({
     domainResponses: z.array(
@@ -168,7 +174,20 @@ export class PsnAuthClient {
 
     const tokens = refreshedTokensSchema.safeParse(rawTokens);
     if (!tokens.success) {
-      throw new PsnConnectionError("REAUTH_REQUIRED");
+      const providerError = oauthErrorSchema.safeParse(rawTokens);
+
+      // psn-api currently normalizes non-2xx token responses into a token-shaped
+      // object without exposing the HTTP status. Only an explicit OAuth
+      // invalid_grant is strong enough evidence that the durable refresh token
+      // has really been rejected. Everything else remains retryable so a
+      // transient or malformed upstream response cannot force a new NPSSO.
+      if (providerError.success && providerError.data.error === "invalid_grant") {
+        throw new PsnConnectionError("REAUTH_REQUIRED");
+      }
+      if (providerError.success) {
+        throw new PsnConnectionError("UPSTREAM_UNAVAILABLE", { retryable: true });
+      }
+      throw new PsnConnectionError("INVALID_RESPONSE", { retryable: true });
     }
 
     return {
