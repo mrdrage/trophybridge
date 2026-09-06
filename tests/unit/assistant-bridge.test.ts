@@ -1,38 +1,45 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
-import { isAssistantBridgeAuthorized } from "../../lib/auth/assistant-bridge";
+import { describe, expect, it } from "vitest";
 
-const original = process.env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN;
+import {
+  hashAssistantBridgeToken,
+  readAssistantBridgeToken,
+} from "../../lib/auth/assistant-bridge";
 
-afterEach(() => {
-  if (original == null) delete process.env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN;
-  else process.env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN = original;
-});
+describe("assistant bridge one-time capability", () => {
+  const token = `tba1_${"A".repeat(43)}`;
 
-describe("assistant bridge authorization", () => {
-  it("fails closed when the server secret is not configured", () => {
-    delete process.env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN;
-    const request = new Request("https://example.test", {
-      headers: { Authorization: `Bearer ${"x".repeat(43)}` },
-    });
-    expect(isAssistantBridgeAuthorized(request)).toBe(false);
-  });
-
-  it("accepts only the exact configured bearer secret", () => {
-    const secret = "s".repeat(43);
-    process.env.TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN = secret;
-
+  it("accepts only a correctly shaped bearer capability", () => {
     expect(
-      isAssistantBridgeAuthorized(
-        new Request("https://example.test", { headers: { Authorization: `Bearer ${secret}` } }),
-      ),
-    ).toBe(true);
-    expect(
-      isAssistantBridgeAuthorized(
+      readAssistantBridgeToken(
         new Request("https://example.test", {
-          headers: { Authorization: `Bearer ${"t".repeat(43)}` },
+          headers: { Authorization: `Bearer ${token}` },
         }),
       ),
-    ).toBe(false);
+    ).toBe(token);
+
+    expect(readAssistantBridgeToken(new Request("https://example.test"))).toBeNull();
+    expect(
+      readAssistantBridgeToken(
+        new Request("https://example.test", {
+          headers: { Authorization: `Basic ${token}` },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      readAssistantBridgeToken(
+        new Request("https://example.test", {
+          headers: { Authorization: `Bearer tba1_${"x".repeat(42)}` },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("hashes the capability before repository lookup", () => {
+    expect(hashAssistantBridgeToken(token)).toBe(
+      createHash("sha256").update(token, "utf8").digest("hex"),
+    );
+    expect(hashAssistantBridgeToken(token)).toMatch(/^[0-9a-f]{64}$/);
   });
 });
