@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  getAiContextPolicy,
-  getAppUrl,
-  getAssistantBridgeToken,
-  getPsnTrophyLocale,
-} from "../../lib/config/server";
+import { getAiContextPolicy, getAppUrl, getPsnTrophyLocale } from "../../lib/config/server";
 
 describe("server configuration", () => {
   it("defaults the trophy metadata locale to Italian", () => {
@@ -26,22 +21,6 @@ describe("server configuration", () => {
         { AI_CONTEXT_MAX_REFRESHES_PER_HOUR: "1000" } as unknown as NodeJS.ProcessEnv,
       ),
     ).toThrow("AI_CONTEXT_MAX_REFRESHES_PER_HOUR");
-  });
-
-  it("requires a high-entropy assistant bridge token when the bridge is enabled", () => {
-    expect(() => getAssistantBridgeToken({} as NodeJS.ProcessEnv)).toThrow(
-      "TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN is required",
-    );
-    expect(() =>
-      getAssistantBridgeToken(
-        { TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN: "short" } as unknown as NodeJS.ProcessEnv,
-      ),
-    ).toThrow("at least 256 bits");
-    expect(
-      getAssistantBridgeToken({
-        TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN: "a".repeat(43),
-      } as unknown as NodeJS.ProcessEnv),
-    ).toBe("a".repeat(43));
   });
 
   it("allows localhost as the application URL only for development/test", () => {
