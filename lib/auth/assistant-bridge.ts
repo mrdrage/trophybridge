@@ -11,7 +11,12 @@ export function isAssistantBridgeAuthorized(request: Request): boolean {
   const [scheme, supplied] = header.split(" ", 2);
   if (scheme !== "Bearer" || !supplied) return false;
 
-  const expected = digest(getAssistantBridgeToken());
-  const actual = digest(supplied);
-  return timingSafeEqual(expected, actual);
+  try {
+    const expected = digest(getAssistantBridgeToken());
+    const actual = digest(supplied);
+    return timingSafeEqual(expected, actual);
+  } catch {
+    // The bridge is deliberately disabled when its server secret is not configured.
+    return false;
+  }
 }
