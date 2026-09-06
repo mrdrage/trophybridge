@@ -62,9 +62,11 @@ The public share token remains intentionally non-recoverable. The one-time opera
 This milestone also hardens durable PSN refresh behavior. The design requirement is:
 
 - only authoritative provider rejection should become `REAUTH_REQUIRED`;
-- malformed responses, network failures, 429 and 5xx responses remain retryable;
+- malformed responses, network failures and non-`invalid_grant` OAuth errors remain retryable;
 - `REAUTH_REQUIRED` must not destroy the encrypted durable credential;
 - once the account is known to require reauthentication, later refresh attempts must short-circuit until a successful NPSSO reconnect changes that state;
 - explicit disconnect still clears the credential.
 
-The implementation includes a TrophyBridge-level adapter because `psn-api` 2.18.1 discards the OAuth `error` field from Sony token responses. Do not regress to classifying every malformed token-shaped response as reauthentication.
+`psn-api` 2.18.1 drops Sony's OAuth `error` field while mapping token responses. TrophyBridge keeps that dependency pinned and runs `scripts/patch-psn-api.mjs` as a root postinstall guard. The patch changes only the token response mapper so it preserves `raw.error`; it does not duplicate or alter the Sony request. It verifies exactly two known mapper signatures in both CJS and ESM bundles and fails installation if the pinned package shape changes unexpectedly.
+
+A dedicated unit test exercises the real installed `exchangeRefreshTokenForAuthTokens` implementation with mocked network responses for success, `invalid_grant`, temporary OAuth failure and thrown network failure. This is intentionally stronger than mocking an impossible downstream adapter object.
