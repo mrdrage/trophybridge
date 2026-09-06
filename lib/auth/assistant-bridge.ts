@@ -1,22 +1,14 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
-import { getAssistantBridgeToken } from "../config/server";
+const ASSISTANT_BRIDGE_TOKEN_PATTERN = /^tba1_[A-Za-z0-9_-]{43}$/;
 
-function digest(value: string): Buffer {
-  return createHash("sha256").update(value, "utf8").digest();
-}
-
-export function isAssistantBridgeAuthorized(request: Request): boolean {
+export function readAssistantBridgeToken(request: Request): string | null {
   const header = request.headers.get("authorization") ?? "";
   const [scheme, supplied] = header.split(" ", 2);
-  if (scheme !== "Bearer" || !supplied) return false;
+  if (scheme !== "Bearer" || !supplied) return null;
+  return ASSISTANT_BRIDGE_TOKEN_PATTERN.test(supplied) ? supplied : null;
+}
 
-  try {
-    const expected = digest(getAssistantBridgeToken());
-    const actual = digest(supplied);
-    return timingSafeEqual(expected, actual);
-  } catch {
-    // The bridge is deliberately disabled when its server secret is not configured.
-    return false;
-  }
+export function hashAssistantBridgeToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
