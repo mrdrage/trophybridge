@@ -33,6 +33,9 @@ export interface PsnAuthCalls {
 const defaultCalls: PsnAuthCalls = {
   exchangeNpssoForAccessCode,
   exchangeAccessCodeForAuthTokens,
+  // psn-api 2.18.1 normally drops OAuth `error` while mapping token responses.
+  // TrophyBridge's pinned postinstall patch preserves that one provider field so
+  // refresh() can distinguish authoritative invalid_grant from transient noise.
   exchangeRefreshTokenForAuthTokens,
   makeUniversalSearch: (authorization, searchTerm, domain) =>
     makeUniversalSearch(authorization, searchTerm, domain),
@@ -176,11 +179,9 @@ export class PsnAuthClient {
     if (!tokens.success) {
       const providerError = oauthErrorSchema.safeParse(rawTokens);
 
-      // psn-api currently normalizes non-2xx token responses into a token-shaped
-      // object without exposing the HTTP status. Only an explicit OAuth
-      // invalid_grant is strong enough evidence that the durable refresh token
-      // has really been rejected. Everything else remains retryable so a
-      // transient or malformed upstream response cannot force a new NPSSO.
+      // Only an explicit provider invalid_grant is strong enough evidence that
+      // the durable refresh token has been rejected. Every other malformed,
+      // throttled or upstream failure remains retryable and cannot force NPSSO.
       if (providerError.success && providerError.data.error === "invalid_grant") {
         throw new PsnConnectionError("REAUTH_REQUIRED");
       }
