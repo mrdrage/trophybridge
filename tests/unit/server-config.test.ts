@@ -33,12 +33,14 @@ describe("server configuration", () => {
       "TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN is required",
     );
     expect(() =>
-      getAssistantBridgeToken({ TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN: "short" } as NodeJS.ProcessEnv),
+      getAssistantBridgeToken(
+        { TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN: "short" } as unknown as NodeJS.ProcessEnv,
+      ),
     ).toThrow("at least 256 bits");
     expect(
       getAssistantBridgeToken({
         TROPHYBRIDGE_ASSISTANT_BRIDGE_TOKEN: "a".repeat(43),
-      } as NodeJS.ProcessEnv),
+      } as unknown as NodeJS.ProcessEnv),
     ).toBe("a".repeat(43));
   });
 
