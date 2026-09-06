@@ -127,16 +127,15 @@ declare
   v_status integer;
   v_content text;
 begin
-  -- Lock the public request row so one operator invocation owns this attempt.
-  -- The Vercel endpoint performs the separate atomic consumed_at update using
-  -- the hash-only row; the private plaintext is never returned to the caller.
+  -- Do not lock this row while performing synchronous HTTP. The Vercel request
+  -- must be able to atomically UPDATE the same row to consumed_at. Concurrent
+  -- invocations are safe because only that conditional UPDATE can win.
   select r.*
   into v_request
   from public.assistant_bridge_requests r
   where r.id = p_request_id
     and r.consumed_at is null
-    and r.expires_at > now()
-  for update;
+    and r.expires_at > now();
 
   if not found then
     raise exception 'Assistant bridge request is missing, expired, or already consumed';
